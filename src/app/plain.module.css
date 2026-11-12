@@ -1,0 +1,27 @@
+.page { max-width: 44rem; margin: 0 auto; padding: 28px 36px 96px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-size: 1.125rem; letter-spacing: .3em; text-transform: uppercase; text-decoration: none; margin-bottom: 72px; }
+.brand:hover { color: var(--hot); }
+.page h1 { font-size: 2.375rem; line-height: 1.1; font-weight: 400; margin: 0 0 24px; text-wrap: balance; }
+.page h2 { font-size: 1.25rem; font-weight: 500; margin: 2.2em 0 .5em; }
+.page p, .page li { font-size: 1.0625rem; line-height: 1.6; max-width: 68ch; }
+.page p { margin: 0 0 1em; }
+.page ul { padding-left: 1.2em; margin: 0 0 1em; }
+.page a, .page button { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.page a:hover, .page button:hover { color: var(--hot); }
+.page code { font-variation-settings: "MONO" 1; font-size: .875em; background: var(--raise); padding: .1em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+.page .brand { text-decoration: none; }
+.small { color: var(--dim); font-size: .9375rem !important; }
+@media (max-width: 700px) { .page { padding: 20px 16px 64px; } .page h1 { font-size: 1.75rem; } .brand { margin-bottom: 40px; } }
+.wide { max-width: 62rem; }
+.crumbs { font-size: .8125rem !important; color: var(--dim); margin: -48px 0 28px !important; }
+.lede { color: var(--dim); }
+.cols { columns: 3 15rem; column-gap: 32px; padding: 0 !important; list-style: none; }
+.cols li { break-inside: avoid; padding: 3px 0; font-size: .9375rem !important; line-height: 1.35 !important; }
+.cols small, .reports small { color: var(--dim); font-size: .8125rem; }
+.reports { list-style: none; padding: 0 !important; counter-reset: r; }
+.reports li { padding: 11px 0; border-top: 1px solid var(--line); max-width: none !important; display: flex; flex-direction: column; gap: 3px; }
+.reports li > a { text-decoration: none !important; }
+.reports small a { color: var(--dim) !important; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0 0 8px; font-variation-settings: "MONO" .5; }
+.facts div { display: flex; flex-direction: column-reverse; }
+.facts b { font-weight: 400; font-size: 1.25rem; } .facts span { font-size: .75rem; color: var(--dim); }

@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local data and secrets
+/data/*.db*
+.env*.local
+!.env.example
+/.next-check
+/.next-auth-test

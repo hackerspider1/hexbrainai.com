@@ -1,0 +1,4 @@
+Contact: https://hexbrainai.com/about
+Preferred-Languages: en
+Canonical: https://hexbrainai.com/.well-known/security.txt
+Expires: 2027-11-12T00:00:00.000Z
