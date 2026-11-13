@@ -15,7 +15,7 @@ const OUT = process.argv[2] || mkdtempSync(join(tmpdir(), "vg-shots-"));
 mkdirSync(OUT, { recursive: true });
 const PORT = 9347;
 // A throwaway account with one API key, so the AI checks work whether or not this copy of the app requires keys.
-const db = new DatabaseSync(join(dirname(fileURLToPath(import.meta.url)), "..", "data", "hexbrain.db"));
+const db = new DatabaseSync(process.env.HEXBRAIN_DB || join(dirname(fileURLToPath(import.meta.url)), "..", "data", "hexbrain.db")); // the same file the server under test reads
 db.exec("PRAGMA busy_timeout = 4000;");
 const testKey = "sk_" + randomBytes(30).toString("base64url"), testSub = "e2e-" + randomBytes(6).toString("hex");
 let testUser = 0;
@@ -153,22 +153,45 @@ try {
   check("Esc twice: back to overview", (await search()) === "" && (await panel()) === null, await search());
   check("overview restored: intro text visible", (await ev("getComputedStyle(document.querySelector('section')).opacity")) === "1");
 
-  // 6. Programs view, and a program's footprint on the dial
+  // 6. Programs view: an index of letters, a dial for each letter, a fan for each program; then a program's footprint on the dial
   await clickText("nav button", "Programs"); await settle(900);
   check("Programs view: opens from the switch", (await search()) === "?view=programs", await search());
   L = await labels();
-  const named = L.filter((l) => l.t.length > 2 && !/ reports?$/.test(l.t) && !/^x -?\d/.test(l.t)).length;
-  check("Programs view: programs are named round the dial", named >= 30, named + " names visible");
-  check("Programs view: no overlapping labels", overlaps(L) === 0, pairs.join(" ; "));
+  const letters = L.filter((l) => /^(#|[A-Z]): \d+ programs?$/.test(l.t)).length;
+  check("Programs index: the letters are named round the dial", letters >= 22, letters + " letters named");
+  check("Programs index: no overlapping labels", overlaps(L) === 0, pairs.join(" ; "));
+  check("Programs index: every program has a logo on the rings inside", (await at("logos")) === total, (await at("logos")) + " of " + total);
   speed.programs = await fps();
   await shot("5-programs");
   p = await at("prog", "Shopify");
   await hover(p[0], p[1]);
-  check("Programs view: hovering a bubble highlights it", (await labels()).some((l) => l.t === "Shopify" && hot(l)));
-  await click(p[0], p[1]); await settle(600);
-  check("Programs view: clicking a bubble opens the program", (await search()).includes("program=Shopify") && /What gets reported here/.test(await panel() || ""), await search());
+  check("Programs index: hovering a logo names the program", (await labels()).some((l) => l.t === "Shopify" && hot(l)));
+  const ringA = await at("prog", "Slack"); await sleep(700); const ringB = await at("prog", "Slack");
+  check("Programs index: the rings hold still while the cursor is inside", Math.hypot(ringA[0] - ringB[0], ringA[1] - ringB[1]) < 0.5);
+  p = await at("prog", "Shopify"); await click(p[0], p[1]); await settle(1400);
+  check("Programs index: clicking a logo opens the program", (await search()) === "?view=programs&program=Shopify" && /What gets reported here/.test(await panel() || ""), await search());
+  check("program: its trail runs through its letter", /^Programs \/ S \/ Shopify/.test(await crumbs() || ""), await crumbs());
+  L = await labels();
+  check("program: its fan names what was reported and where to look", L.some((l) => l.t === "Cross-site Scripting") && L.some((l) => /shopify\.com$/.test(l.t)), L.slice(0, 6).map((l) => l.t).join(" | "));
   check("program panel: logo shown", await ev("!!document.querySelector('aside h2 img') && document.querySelector('aside h2 img').naturalWidth > 0"));
   check("program panel: reports listed", (await rows()) > 5);
+  speed.programOpen = await fps();
+  await shot("5b-program");
+  p = await at("weakOf", "Shopify", "Cross-site Scripting"); await click(p[0], p[1]); await settle(2200);
+  L = await labels();
+  check("program: a class opens into a disc of the reports it got there", (await search()) === "?view=programs&program=Shopify&weakness=Cross-site Scripting" && /128 reports to Shopify/.test(await panel() || "") && L.filter((l) => /^#\d+/.test(l.t)).length >= 12, (await search()) + " " + L.length);
+  await shot("5c-program-class");
+  await key("Escape"); await settle(900); await key("Escape"); await settle(1400);
+  check("letter dial: stepping out of a program shows its letter", (await search()) === "?view=programs&letter=S" && /35 programs/.test(await panel() || ""), await search());
+  L = await labels();
+  check("letter dial: its programs are named round it", L.filter((l) => /^\d[\d,]* reports?(,|$)/.test(l.t)).length >= 14 && overlaps(L) === 0, L.length + " labels");
+  await shot("5d-letter");
+  await key("Escape"); await settle(1200);
+  check("letter dial: Esc returns to the index", (await search()) === "?view=programs", await search());
+  p = await at("cls", "S"); await click(p[0], p[1]); await settle(1400);
+  check("Programs index: clicking a letter opens its dial", (await search()) === "?view=programs&letter=S", await search());
+  p = await at("cls", "Shopify"); await click(p[0], p[1]); await settle(1400);
+  check("letter dial: clicking a hub opens the program", (await search()) === "?view=programs&program=Shopify", await search());
   await clickText("aside button", "vulnerability map"); await settle(1200);
   L = await labels();
   check("program on the dial: stays open, switches view", (await search()) === "?program=Shopify", await search());
@@ -207,44 +230,51 @@ try {
   check("CVE ring: pauses under the cursor, names the CVE and turns it red", Math.hypot(stay2[1] - stay[1], stay2[2] - stay[2]) < 0.2 && (await ringText()).some((l) => l.t === stay[0] && l.fill.includes("255,59,48")) && (await labels()).some((l) => /Exploited in the wild/.test(l.t)));
   await hover(700, 450);
 
-  // 6d. The CVEs view: every registered CVE
+  // 6d. The CVEs view: an index of years, a clock-face dial for each year, a fan for each month, a disc for each band
   await clickText("nav button", "CVEs"); await settle(900);
   check("CVEs view: opens from the switch", (await search()) === "?view=cves", await search());
+  for (let i = 0; i < 30 && !((await at("core")) > 0); i++) await sleep(200); // the exploited CVEs arrive after the view opens
   L = await labels();
-  check("CVEs view: counts every registered CVE and the exploited ones", L.some((l) => l.t === "registered CVEs") && L.some((l) => /^[\d,]+ exploited in the wild$/.test(l.t) && hot(l) === false && l.fill.includes("255,59,48")) && L.some((l) => /^\d{3},\d{3}$/.test(l.t)));
-  check("CVEs view: every year is a node with its name", L.filter((l) => /^(19|20)\d\d$/.test(l.t)).length >= 20, L.filter((l) => /^(19|20)\d\d$/.test(l.t)).length + " years");
-  check("CVEs view: no overlapping labels", overlaps(L) === 0, pairs.join(" ; "));
+  check("CVE index: counts every registered CVE and the exploited ones", L.some((l) => l.t === "registered CVEs") && L.some((l) => /^[\d,]+ exploited in the wild$/.test(l.t) && hot(l) === false && l.fill === "rgb(255,59,48)"), L.map((l) => l.t).slice(0, 6).join(" | "));
+  check("CVE index: every year is named round the dial", L.filter((l) => /^(19|20)\d\d$/.test(l.t)).length >= 20, L.filter((l) => /^(19|20)\d\d$/.test(l.t)).length + " years");
+  check("CVE index: no overlapping labels", overlaps(L) === 0, pairs.join(" ; "));
+  const core = await (await fetch(BASE + "/api/cve-core")).json(), one = core.find((c) => c[4] && c[1] && c[3] > 0) || core[0];
+  check("CVE index: every exploited CVE is a dot inside the ring", (await at("core")) === core.length && core.length > 1000, (await at("core")) + " of " + core.length);
   speed.cves = await fps();
-  await shot("5b-cves");
-  p = await at("cls", "2021");
-  await hover(p[0], p[1]);
-  check("CVEs view: hovering a year node highlights it", (await labels()).some((l) => l.t === "2021" && hot(l)));
-  await click(p[0], p[1]); await settle(800);
-  check("CVEs view: clicking a year turns the dial to it and fans out its strips", (await search()) === "?view=cves&class=2021" && /How this year.s CVEs sort/.test(await panel() || "") && (await at("weakOf", "2021", "Exploited in the wild"))[0] < (await at("cls", "2021"))[0], await search());
-  L = await labels();
-  check("CVEs view: the year's five strips are named beside it", L.filter((l) => /^Band \d /.test(l.t)).length === 5 && L.some((l) => l.t === "Exploited in the wild"), L.filter((l) => /^Band/.test(l.t)).length + " strips");
-  check("CVEs view: no overlapping labels in a year", overlaps(L) === 0, pairs.join(" ; "));
-  await shot("5c-cve-year");
-  p = await at("weakOf", "2021", "Exploited in the wild");
-  await click(p[0], p[1]); await settle(1800);
-  check("CVEs view: opening a strip regroups its CVEs into a disc", (await search()) === "?view=cves&class=2021&weakness=Exploited in the wild" && /216 CVEs registered in 2021/.test(await panel() || ""), await search());
-  L = await labels();
-  const cveCols = L.filter((l) => /^CVE-2021-\d+ /.test(l.t));
-  check("CVEs view: CVEs are named in two columns beside the disc", cveCols.length >= 16 && new Set(cveCols.map((l) => l.a)).size === 2, cveCols.length + " names");
-  check("CVEs view: the panel lists them with a link to each", (await ev("document.querySelectorAll('aside a[href^=\"/cve/CVE-2021-\"]').length")) >= 40);
-  speed.cveBand = await fps();
-  await shot("5d-cve-band");
-  const c1 = cveCols[0];
-  await click(c1.a === "end" ? c1.x - 30 : c1.x + 30, c1.y + 13); await sleep(700);
-  check("CVEs view: clicking a CVE's name opens its card", /Open this CVE/.test(await panel() || ""), await panel());
+  await shot("5d-cves");
+  p = await at("core", one[0]); await hover(p[0], p[1]);
+  check("CVE index: hovering a red dot names that CVE and lights its year", (await labels()).some((l) => l.t.startsWith(one[1].slice(0, 20))) && (await ev("window.__vg.state().hover")) === "x" + one[0], one[0]);
+  await click(p[0], p[1]); await settle(1500);
+  for (let i = 0; i < 20 && !/Open this CVE/.test(await panel() || ""); i++) await sleep(250);
+  const monthId = `${one[2]}-${String(one[3]).padStart(2, "0")}`;
+  check("CVE index: clicking a red dot opens that CVE, four levels down", (await search()) === `?view=cves&class=${monthId}&weakness=Exploited in the wild` && /Open this CVE/.test(await panel() || "") && (await crumbs()).endsWith("Exploited in the wild / " + one[0]), (await search()) + " :: " + (await crumbs()));
   const cveHref = await ev("document.querySelector('aside a[href^=\"/cve/\"]')?.getAttribute('href')");
-  check("CVEs view: the card links to a page that exists", cveHref && (await fetch(BASE + cveHref)).status === 200, cveHref);
-  await key("Escape"); await sleep(300); await key("Escape"); await settle(700);
-  p = await at("weakOf", "2021", "Unlikely (under 1%)");
-  await click(p[0], p[1]); await settle(900);
-  check("CVEs view: a strip too large for a disc stays in place and lists its CVEs", /too large to open out/.test(await panel() || "") && (await ev("document.querySelectorAll('aside a[href^=\"/cve/\"]').length")) >= 40, (await panel() || "").slice(0, 160));
-  await key("Escape"); await sleep(300); await key("Escape"); await settle(600);
-  check("CVEs view: Esc steps back out to all years", (await search()) === "?view=cves");
+  check("CVE card: links to a page that exists", cveHref && (await fetch(BASE + cveHref)).status === 200, cveHref);
+  await key("Escape"); await settle(700);
+  L = await labels();
+  check("band: its CVEs are named beside the disc", L.some((l) => l.t === "Exploited in the wild") && L.filter((l) => /% likely$/.test(l.t)).length >= 1, L.length + " labels");
+  check("band: the panel lists its CVEs with a filter", (await ev("document.querySelectorAll('aside a[href^=\"/cve/CVE-\"]').length")) >= 1 && (await ev("!!document.querySelector('aside input')")));
+  speed.cveBand = await fps();
+  await shot("5e-cve-band");
+  await key("Escape"); await settle(1100);
+  L = await labels();
+  check("month: its bands are named beside the fan", (await search()) === `?view=cves&class=${monthId}` && L.filter((l) => /^Band \d /.test(l.t)).length >= 3 && L.some((l) => l.t === "Exploited in the wild"), L.filter((l) => /^Band/.test(l.t)).map((l) => l.t).join(" | "));
+  check("month: no overlapping labels", overlaps(L) === 0, pairs.join(" ; "));
+  const big = await ev(`(() => { const rows = [...document.querySelectorAll('aside button[class*=row]')].map((b) => [b.querySelector('span').textContent, +b.querySelector('small').textContent.replace(/,/g, '')]); return rows.sort((x, y) => y[1] - x[1])[0]; })()`);
+  p = await at("weakOf", monthId, big[0]); await click(p[0], p[1]); await settle(2400);
+  check("month: even its largest band opens into a disc", (await search()) === `?view=cves&class=${monthId}&weakness=${big[0]}` && !/too large/.test(await panel() || "") && (await ev("document.querySelectorAll('aside a[href^=\"/cve/CVE-\"]').length")) >= Math.min(20, big[1]), (await search()) + " " + big[1]);
+  await key("Escape"); await settle(700); await key("Escape"); await settle(1300);
+  L = await labels();
+  check("year dial: stepping out of a month shows the year as a clock of months", (await search()) === `?view=cves&year=${one[2]}` && L.filter((l) => /^(January|February|March|April|May|June|July|August|September|October|November|December)$/.test(l.t)).length >= 6 && L.some((l) => l.t === String(one[2]) && l.px > 30), (await search()) + " " + L.length);
+  check("year dial: no overlapping labels", overlaps(L) === 0, pairs.join(" ; "));
+  await shot("5f-cve-year");
+  await key("Escape"); await settle(1100);
+  check("year dial: Esc returns to the index", (await search()) === "?view=cves", await search());
+  p = await at("cls", String(one[2])); await hover(p[0], p[1]);
+  check("CVE index: hovering a year's key highlights it", (await labels()).some((l) => l.t === String(one[2]) && hot(l)));
+  await click(p[0], p[1]); await settle(1300);
+  check("CVE index: clicking a year opens its dial", (await search()) === `?view=cves&year=${one[2]}` && /Months/.test(await panel() || ""), await search());
+  await key("Escape"); await settle(900);
   await clickText("nav button", "Vulnerabilities"); await settle(700);
 
   // 7. Full lists behind the counters
@@ -291,9 +321,11 @@ try {
   await go("/?class=NOPE&weakness=zzz", 3500);
   check("broken link: falls back to the overview", (await panel()) === null && (await labels()).filter((l) => l.px === 12.5).length === 18);
   await go("/?view=programs", 4000);
-  check("link to the Programs view: opens it", (await labels()).filter((l) => l.t.length > 2 && !/ reports?$/.test(l.t)).length >= 30);
+  check("link to the Programs view: opens it", (await labels()).filter((l) => /^(#|[A-Z]): \d+ programs?$/.test(l.t)).length >= 22);
+  await go("/?view=cves&year=2024", 4500); await sleep(800);
+  check("link to a year of CVEs: opens it", /CVEs published in 2024 [\d,]+ CVEs/.test(await panel() || ""), (await panel() || "").slice(0, 80));
   await go("/?view=cves&class=2024", 4500); await sleep(800);
-  check("link to a year of CVEs: opens it", /38,503 CVEs/.test(await panel() || ""));
+  check("older link to a year of CVEs: still opens it", /CVEs published in 2024/.test(await panel() || ""));
   await go("/?program=GitLab", 4500); await sleep(800);
   check("link to a program: shows its reports on the dial", (await labels()).some((l) => /from GitLab$/.test(l.t)) && /GitLab/.test(await panel() || ""));
 
@@ -336,7 +368,7 @@ try {
   const auth = { Authorization: "Bearer " + testKey };
   const rpc = async (method, params) => (await (await fetch(BASE + "/api/mcp", { method: "POST", headers: { "Content-Type": "application/json", ...auth }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })).json());
   const tools = (await rpc("tools/list")).result?.tools?.map((t) => t.name) || [];
-  check("AI: ten tools are offered", tools.length === 10, tools.join(","));
+  check("AI: eleven tools are offered", tools.length === 11, tools.join(","));
   const calls = [["hexbrain_list_classes", {}], ["hexbrain_search_reports", { query: "oauth", limit: 2 }], ["hexbrain_get_report", { id: 1819832, max_chars: 600 }],
     ["hexbrain_get_testing_playbook", { topic: "ssrf", limit: 2, excerpt_chars: 300 }], ["hexbrain_get_program_history", { program: "gitlab", limit: 2 }],
     ["hexbrain_plan_tests", { feature: "profile picture upload" }], ["hexbrain_search_reports", { query: "read other users invoices by changing id", search_writeups: true, limit: 3 }],
@@ -362,6 +394,30 @@ try {
   await clickDom("aside button", 0); await settle(1500);
   check("phone: weakness list loads", (await rows()) > 5);
   await shot("10-phone-weakness");
+
+  // Subdomains on a program page (skipped when that data has not been imported here)
+  const sub = await (await fetch(BASE + "/api/subdomains?program=GitHub&q=api")).json();
+  if (sub.total) {
+    check("subdomains: a program's names can be filtered", sub.rows.length > 5 && sub.rows.every((h) => h.includes("api") && /^[a-z0-9._-]+$/.test(h)), sub.rows.slice(0, 3).join(","));
+    const part = await fetch(BASE + "/api/subdomains/download?program=GitHub&suffix=githubapp.com"), text = await part.text();
+    check("subdomains: one domain downloads as a text file", /attachment/.test(part.headers.get("content-disposition") || "") && text.trim().split("\n").every((h) => h === "githubapp.com" || h.endsWith(".githubapp.com")) && text.length > 100);
+    check("subdomains: an unknown program has nothing to download", (await fetch(BASE + "/api/subdomains/download?program=No%20Such%20Program")).status === 404);
+    // The same data inside the Programs view, on a program's own fan
+    await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }); // back to a desktop window after the phone checks
+    await send("Page.navigate", { url: BASE + "/?view=programs&program=GitHub" }); await sleep(3500); await settle(900);
+    check("link to a program in the Programs view: opens its fan", /^Programs \/ G \/ GitHub/.test(await crumbs() || "") && /What gets reported here/.test(await panel() || ""), await crumbs());
+    check("program: lists its domains and offers every subdomain as a download", await ev("/Where to look/.test(document.querySelector('aside').innerText) && !!document.querySelector('aside a[download]')"));
+    p = await at("weakOf", "GitHub", "api.github.com"); await click(p[0], p[1]); await settle(2400);
+    L = await labels();
+    check("program: a domain opens into a disc with its hosts named beside it", (await search()) === "?view=programs&program=GitHub&weakness=api.github.com" && L.filter((l) => /\.api\.github\.com$/.test(l.t)).length >= 12, L.length + " labels: " + L.slice(0, 5).map((l) => l.t).join(" | ") + " :: " + (await search()));
+    check("program: the panel lists the hosts and offers that domain as a download", await ev("document.querySelectorAll('aside ol li').length > 20 && /suffix=api.github.com/.test(document.querySelector('aside a[download]')?.getAttribute('href') || '')"));
+    await key("Escape"); await settle(1000);
+    check("program: Esc steps back out of the domain", (await search()) === "?view=programs&program=GitHub", await search());
+    await send("Page.navigate", { url: BASE + "/program/GitHub" }); await sleep(3500);
+    check("program page: draws the attack surface with a download", await ev("document.querySelectorAll('main svg[role=img] g[class*=spoke]').length > 8 && !!document.querySelector('main a[download]')"));
+    await ev("document.querySelectorAll('main svg[role=img] g[class*=spoke]')[4].dispatchEvent(new MouseEvent('click', { bubbles: true }))"); await sleep(1500);
+    check("program page: picking a strip lists that domain's names", await ev("(() => { const t = document.querySelector('main [class*=head] b').textContent, rows = [...document.querySelectorAll('main ol[class*=hosts] li')].map((l) => l.textContent); return rows.length > 0 && rows.every((h) => h === t || h.endsWith('.' + t)); })()"));
+  }
 } catch (e) {
   check("test run completed", false, e.stack || e);
 } finally {

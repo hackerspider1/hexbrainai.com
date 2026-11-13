@@ -33,3 +33,14 @@ Report titles and write-ups come from each report's public page on HackerOne and
 
 - Source: https://www.first.org/epss
 - Exploit Prediction Scoring System scores, by FIRST.
+
+## Chaos public bug bounty dataset
+
+- Source: https://chaos.projectdiscovery.io
+- Subdomains of public bug bounty programs, published by ProjectDiscovery, Inc. Shown per program and offered for download as received.
+
+## cve.now
+
+- Source: https://cve.now, built by Sazabi
+- A headline, score, product and fixed versions for each CVE. Its summaries are licensed CC BY 4.0: https://creativecommons.org/licenses/by/4.0/
+- cve.now uses NVD data and is not endorsed by NVD.

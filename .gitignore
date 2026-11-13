@@ -48,3 +48,5 @@ next-env.d.ts
 /.next-auth-test
 /.next-share
 /data/sources
+/data/subdomains
+/.shots

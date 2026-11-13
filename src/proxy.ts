@@ -27,5 +27,7 @@ export function proxy(request: NextRequest) {
 
 // Pages only: files, images and the API do not need it.
 export const config = {
-  matcher: [{ source: "/((?!api|_next/static|_next/image|logos|favicon.ico|icon|apple-icon|opengraph-image|robots.txt|sitemap.xml|manifest.webmanifest).*)", missing: [{ type: "header", key: "next-router-prefetch" }] }],
+  // Prefetches are counted too: a header a visitor can set must not be a way round the limit. The sitemap and the
+  // share image are built on request, so they are limited as well.
+  matcher: [{ source: "/((?!api|_next/static|_next/image|logos|favicon.ico|icon|apple-icon|robots.txt|manifest.webmanifest).*)" }],
 };

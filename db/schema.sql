@@ -58,6 +58,24 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_at TEXT NOT NULL, last_used_at TEXT, requests INTEGER NOT NULL DEFAULT 0, revoked_at TEXT
 );
 CREATE INDEX IF NOT EXISTS api_keys_user ON api_keys(user_id);
+-- Subdomains known for a program, from ProjectDiscovery's Chaos public dataset (`node scripts/ingest.mjs subdomains`).
+-- The names themselves are kept as one compressed text file per program in data/subdomains; this table holds the counts.
+CREATE TABLE IF NOT EXISTS program_assets (
+  handle TEXT PRIMARY KEY, total INTEGER NOT NULL, roots TEXT NOT NULL,
+  branches TEXT NOT NULL, -- how the names divide for drawing: [name, domain, count], by root domain or by the label under a dominant root
+  source TEXT NOT NULL, source_updated TEXT, updated_at TEXT NOT NULL
+);
+
+-- A headline and the basic facts for every CVE, from cve.now (`node scripts/ingest.mjs cvenow`). Its headlines are CC BY 4.0.
+CREATE TABLE IF NOT EXISTS cve_info (
+  id TEXT PRIMARY KEY, title TEXT, cvss REAL, product TEXT, fixed TEXT, kev INTEGER NOT NULL DEFAULT 0, published TEXT, modified TEXT
+);
+
+-- Word index over those headlines and products, rebuilt after each import, so a product's CVEs are found at once.
+CREATE VIRTUAL TABLE IF NOT EXISTS cve_info_fts USING fts5(product, title, content='cve_info', content_rowid='rowid', tokenize='unicode61');
+
+-- When HEXBRAIN_INVITE_ONLY is on, only these email addresses (and the admins) may create and use API keys.
+CREATE TABLE IF NOT EXISTS invites (email TEXT PRIMARY KEY, added_by TEXT, created_at TEXT NOT NULL);
 
 -- Derived by `node scripts/ingest.mjs index`: write-ups cut into passages for precise search, the protections
 -- each report got past, and which earlier report a bypass refers to.
@@ -88,5 +106,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS cves_fts USING fts5(id, name, vendor, product
 
 -- Every registered CVE id (from the public EPSS list). For the CVE map each sits in a band of its year
 -- (0 exploited, 1 has a ready check, 2 likely, 3 possible, 4 unlikely) at position `pos`, most likely first.
-CREATE TABLE IF NOT EXISTS cve_map (id TEXT PRIMARY KEY, year INTEGER NOT NULL, band INTEGER NOT NULL, pos INTEGER NOT NULL, epss REAL);
+-- `month` is the month the CVE was published (1 to 12), or 0 when no date is known; it and its index are added by the
+-- code that opens the database, so that older copies of the file gain them too.
+CREATE TABLE IF NOT EXISTS cve_map (id TEXT PRIMARY KEY, year INTEGER NOT NULL, band INTEGER NOT NULL, pos INTEGER NOT NULL, epss REAL, month INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS cve_map_place ON cve_map(year, band, pos);

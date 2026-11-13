@@ -85,3 +85,9 @@ export function guessWeakness(title: string): string {
   for (const [re, name] of TITLE_RULES) if (re.test(title)) return name;
   return "";
 }
+
+/** How the program closed a report. HackerOne calls a valid report "resolved"; a report whose details are not stored has no status. */
+export const STATUSES: [key: string, label: string, substate: string][] = [
+  ["valid", "Valid", "resolved"], ["informative", "Informative", "informative"], ["na", "N/A", "not-applicable"], ["duplicate", "Duplicate", "duplicate"], ["spam", "Spam", "spam"],
+];
+export const statusLabel = (substate: string | null | undefined) => STATUSES.find((x) => x[2] === substate)?.[1] ?? null;

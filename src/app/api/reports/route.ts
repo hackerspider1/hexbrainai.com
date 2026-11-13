@@ -14,6 +14,7 @@ export function GET(req: NextRequest) {
       weakness: p.get("weakness") || undefined,
       cls: p.get("class") || undefined,
       program: p.get("program") || undefined,
+      status: p.get("status") || undefined,
       sort: p.get("sort") || undefined,
       offset: Number(p.get("offset")) || 0,
       limit: Number(p.get("limit")) || 30,

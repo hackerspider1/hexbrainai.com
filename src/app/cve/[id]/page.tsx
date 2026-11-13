@@ -28,17 +28,21 @@ export default async function CvePage({ params }: Props) {
     return (
       <Sheet here="cves" className={`${s.page} ${s.wide}`}>
         <p className={s.crumbs}><Link href="/browse">Browse</Link> / <Link href="/cves">CVEs</Link> / {stub.id}</p>
-        <h1>{stub.id}</h1>
+        {stub.title && <p className={s.crumbs}><span>{stub.id}</span>{stub.product && <span>· {stub.product}</span>}</p>}
+        <h1>{stub.title || stub.id}</h1>
         <p className={s.lede}>A registered CVE. It is not on the list of vulnerabilities known to be exploited, and we hold no ready check for it.</p>
         <div className={s.facts}>
           <div><b>Not known</b><span>exploited in the wild</span></div>
+          {stub.cvss != null && <div><b>{stub.cvss}</b><span>CVSS score</span></div>}
+          {stub.fixed && <div><b>{stub.fixed.split(", ").slice(0, 3).join(", ")}</b><span>fixed in</span></div>}
           {stub.epss != null && <div className={s.wide}><Meter value={stub.epss} /><b>{Math.round(stub.epss * 1000) / 10}%</b><span>likelihood of exploitation in the next 30 days</span></div>}
         </div>
-        <p className={s.acts}><a href={`https://nvd.nist.gov/vuln/detail/${stub.id}`} target="_blank" rel="noopener noreferrer">Read its record on the National Vulnerability Database</a><Link href="/?view=cves">See it on the map</Link></p>
+        <p className={s.acts}><a href={`https://nvd.nist.gov/vuln/detail/${stub.id}`} target="_blank" rel="noopener noreferrer">Read its record on the National Vulnerability Database</a><a href={`https://cve.now/${stub.id}`} target="_blank" rel="noopener noreferrer">Full entry on cve.now</a><Link href="/?view=cves">See it on the map</Link></p>
+        {stub.title && <p className={s.small}>Headline from <a href="https://cve.now" target="_blank" rel="noopener noreferrer">cve.now</a>, CC BY 4.0.</p>}
       </Sheet>
     );
   }
-  let refs: string[] = []; try { refs = JSON.parse(c.refs || "[]"); } catch { /* none */ }
+  let refs: string[] = []; try { refs = (JSON.parse(c.refs || "[]") as unknown[]).filter((u): u is string => typeof u === "string" && /^https?:\/\//i.test(u)); } catch { /* none */ }
   const product = [c.vendor, c.product].filter(Boolean).join(" / ").replace(/_/g, " ");
   return (
     <Sheet here="cves" className={`${s.page} ${s.wide}`}>

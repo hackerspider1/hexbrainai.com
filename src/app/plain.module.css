@@ -105,3 +105,10 @@
   .reports li > .num:last-child { display: none; }
   .facts { gap: 14px 28px; } .facts b { font-size: 1.25rem; }
 }
+
+/* Filter links above a report list, and the tag on a report the program did not accept. */
+.pick { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px !important; }
+.page .pick a { display: inline-flex; align-items: center; height: 28px; padding: 0 11px; border-radius: 6px; background: var(--raise); color: var(--dim); font-size: .75rem; text-decoration: none; }
+.page .pick a:hover { color: var(--ink); }
+.page .pick a[aria-current] { background: var(--ink); color: var(--bg); }
+.flag { font-weight: 400; color: var(--hot); margin-right: 8px; }

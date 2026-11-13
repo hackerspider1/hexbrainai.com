@@ -37,7 +37,7 @@
 .link:hover { color: var(--hot); }
 .gone { opacity: 0; pointer-events: none; }
 
-.stats { position: absolute; right: 36px; bottom: 30px; margin: 0; display: grid; grid-template-columns: repeat(4, auto); gap: 2px 26px;
+.stats { position: absolute; right: 36px; bottom: 30px; margin: 0; display: grid; grid-template-columns: repeat(var(--n, 4), auto); gap: 2px 26px;
   transition: opacity .4s; font-variation-settings: "MONO" .5; }
 .stat { display: flex; flex-direction: column-reverse; text-align: left; }
 .stat b { font-size: 1.0625rem; font-weight: 400; }
@@ -65,6 +65,7 @@ button.stat:hover b, button.stat:hover span { color: var(--hot); }
 .sorts { display: flex; gap: 6px; margin: 22px 0 12px; }
 .sorts button { font-size: .75rem; padding: 6px 10px; border-radius: 6px; background: var(--raise); color: var(--dim); }
 .sorts button[aria-pressed="true"] { color: var(--bg); background: var(--ink); }
+.statuses { margin: -4px 0 12px; }
 .more { margin-top: 14px; padding: 10px; background: var(--raise); border-radius: 7px; font-size: .8125rem; }
 .note { color: var(--dim); font-size: .8125rem; margin: 12px 0; }
 .actions { display: flex; flex-direction: column; gap: 10px; margin-top: 26px; }
@@ -141,3 +142,12 @@ button.stat:hover b, button.stat:hover span { color: var(--hot); }
 
 .acct { display: inline-flex; align-items: center; text-decoration: none; }
 .acct img { border-radius: 50%; display: block; }
+
+/* Subdomains in the panel, on the attack-surface level of Programs. */
+.hosts { list-style: none; margin: 4px 0 0; padding: 0; }
+.hosts li { padding: 6px 0; border-top: 1px solid var(--line); font-size: .8125rem; line-height: 1.35; font-variation-settings: "MONO" 1; overflow-wrap: anywhere; }
+a.jump { display: block; text-decoration: none; }
+.quiet { background: var(--raise); color: var(--ink); }
+.quiet:hover { background: var(--line); color: var(--ink); }
+.hot { font-style: normal; color: var(--red); font-size: .75rem; }
+.stat b.red { color: var(--red); }

@@ -2,14 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import Bars from "@/components/Bars";
 import Sheet from "@/components/Sheet";
-import ReportList from "@/components/ReportList";
+import ReportList, { StatusFilter } from "@/components/ReportList";
 import { classPath, jsonLd, n, usd } from "@/lib/browse";
 import { getGraph, listReports } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import s from "../../plain.module.css";
 
 export const dynamic = "force-dynamic";
-type Props = { params: Promise<{ id: string }> };
+type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ status?: string }> };
 const find = async (params: Props["params"]) => { const id = (await params).id.toUpperCase(), g = getGraph(); return { g, c: g.classes.find((x) => x.id === id) }; };
 
 export async function generateMetadata({ params }: Props) {
@@ -22,10 +22,11 @@ export async function generateMetadata({ params }: Props) {
   };
 }
 
-export default async function ClassPage({ params }: Props) {
+export default async function ClassPage({ params, searchParams }: Props) {
+  const status = (await searchParams).status || "";
   const { g, c } = await find(params);
   if (!c) notFound();
-  const top = listReports({ cls: c.id, limit: 100 }).rows as Parameters<typeof ReportList>[0]["rows"];
+  const top = listReports({ cls: c.id, status, limit: 100 }).rows as Parameters<typeof ReportList>[0]["rows"];
   const linked = g.links.filter(([a, b]) => a === c.id || b === c.id).map(([a, b, k]) => ({ o: g.classes.find((x) => x.id === (a === c.id ? b : a))!, k })).filter((l) => l.o);
   const crumbs = { "@context": "https://schema.org", "@type": "BreadcrumbList", itemListElement: [
     { "@type": "ListItem", position: 1, name: SITE.name, item: SITE.url }, { "@type": "ListItem", position: 2, name: "Browse", item: `${SITE.url}/browse` },
@@ -51,6 +52,8 @@ export default async function ClassPage({ params }: Props) {
       </>)}
 
       <h2>Most upvoted {c.name} reports</h2>
+      <StatusFilter base={classPath(c.id)} current={status} />
+      {top.length === 0 && <p>No reports with this status.</p>}
       <ReportList rows={top} />
     </Sheet>
   );

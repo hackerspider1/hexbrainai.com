@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import Sheet from "@/components/Sheet";
+import { plainName } from "@/lib/browse";
 import Writeup from "@/components/Writeup";
 import { classPath } from "@/lib/browse";
 import { getGraph, techniquesOf } from "@/lib/db";
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
 type Props = { params: Promise<{ topic: string }> };
 
 export async function generateMetadata({ params }: Props) {
-  const topic = decodeURIComponent((await params).topic), rows = techniquesOf(topic);
+  const topic = plainName((await params).topic), rows = techniquesOf(topic);
   if (!rows.length) return { title: "Not found" };
   return {
     title: `${topic} payloads and techniques`,
@@ -21,7 +22,7 @@ export async function generateMetadata({ params }: Props) {
 }
 
 export default async function PayloadTopic({ params }: Props) {
-  const topic = decodeURIComponent((await params).topic), rows = techniquesOf(topic);
+  const topic = plainName((await params).topic), rows = techniquesOf(topic);
   if (!rows.length) notFound();
   const cls = rows[0].class_id ? getGraph().classes.find((c) => c.id === rows[0].class_id) : null;
   return (

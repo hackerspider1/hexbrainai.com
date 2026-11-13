@@ -9,6 +9,29 @@ export const SESSION_COOKIE = "session", OAUTH_COOKIE = "oauth";
 export const MAX_KEYS = 5;
 const SESSION_DAYS = 30;
 const sha = (v: string) => createHash("sha256").update(v).digest("hex");
+const emails = (v?: string) => (v || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+/** With HEXBRAIN_INVITE_ONLY=true anyone may sign in, but only invited people (and the admins in HEXBRAIN_ADMINS) may create and use API keys. */
+export const inviteOnly = () => process.env.HEXBRAIN_INVITE_ONLY === "true";
+export const isAdmin = (email: string | null) => !!email && emails(process.env.HEXBRAIN_ADMINS).includes(email.toLowerCase());
+export const mayUseApi = (email: string | null) =>
+  !inviteOnly() || isAdmin(email) || (!!email && !!db().prepare("SELECT 1 FROM invites WHERE email = ?").get(email.toLowerCase()));
+export type Invite = { email: string; created_at: string; joined: number };
+export function listInvites(): Invite[] {
+  return db().prepare("SELECT i.email, i.created_at, EXISTS(SELECT 1 FROM users u WHERE lower(u.email) = i.email) AS joined FROM invites i ORDER BY i.created_at DESC").all().map((r) => ({ ...r })) as unknown as Invite[];
+}
+/** People who have signed in but are neither invited nor admins: the queue an admin can approve from. */
+export function listWaiting(): { email: string; name: string | null; created_at: string }[] {
+  return (db().prepare(`SELECT email, name, created_at FROM users WHERE email IS NOT NULL AND lower(email) NOT IN (SELECT email FROM invites) ORDER BY created_at DESC LIMIT 300`).all()
+    .map((r) => ({ ...r })) as unknown as { email: string; name: string | null; created_at: string }[]).filter((u) => !isAdmin(u.email));
+}
+/** Returns false when the address is not an email address or the list is full. */
+export function addInvite(email: string, by: string | null): boolean {
+  const e = email.trim().toLowerCase();
+  if (!/^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(e) || e.length > 200 || (db().prepare("SELECT COUNT(*) n FROM invites").get() as { n: number }).n >= 2000) return false;
+  db().prepare("INSERT OR IGNORE INTO invites (email, added_by, created_at) VALUES (?,?,?)").run(e, by, new Date().toISOString());
+  return true;
+}
+export function removeInvite(email: string) { db().prepare("DELETE FROM invites WHERE email = ?").run(email.trim().toLowerCase()); }
 const token = (bytes = 32) => randomBytes(bytes).toString("base64url");
 const same = (a: string, b: string) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 
@@ -80,10 +103,12 @@ export function identify(req: Request): { id: string } | null {
   const owner = process.env.HEXBRAIN_API_KEY;
   if (owner && sent && same(sent, owner)) return { id: "owner" };
   if (sent.startsWith("sk_")) {
-    const row = db().prepare("SELECT id, user_id FROM api_keys WHERE hash = ? AND revoked_at IS NULL").get(sha(sent)) as { id: number; user_id: number } | undefined;
-    if (!row) return null;
-    db().prepare("UPDATE api_keys SET requests = requests + 1, last_used_at = ? WHERE id = ?").run(new Date().toISOString(), row.id);
-    return { id: "user" + row.user_id };
+    const row = db().prepare("SELECT k.id, k.user_id, u.email FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.hash = ? AND k.revoked_at IS NULL").get(sha(sent)) as { id: number; user_id: number; email: string | null } | undefined;
+    if (!row || !mayUseApi(row.email)) return null; // a key stops working the moment its owner's invitation is withdrawn
+    try { db().prepare("UPDATE api_keys SET requests = requests + 1, last_used_at = ? WHERE id = ?").run(new Date().toISOString(), row.id); }
+    catch { /* the database is busy (an import is running): serve the request and skip the count */ }
+    // Limits follow the person, not the account row, so deleting an account and signing in again does not reset them.
+    return { id: "acct:" + (row.email || "user" + row.user_id).toLowerCase() };
   }
   return keysRequired() ? null : { id: "" };
 }

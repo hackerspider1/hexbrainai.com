@@ -12,6 +12,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const g = getGraph();
   return [
     { url: `${SITE.url}/`, changeFrequency: "daily", priority: 1 },
+    { url: `${SITE.url}/privacy`, changeFrequency: "yearly", priority: 0.2 },
+    { url: `${SITE.url}/terms`, changeFrequency: "yearly", priority: 0.2 },
     { url: `${SITE.url}/browse`, changeFrequency: "daily", priority: 0.9 },
     { url: `${SITE.url}/about`, changeFrequency: "monthly", priority: 0.5 },
     { url: `${SITE.url}/bypasses`, changeFrequency: "weekly", priority: 0.9 },

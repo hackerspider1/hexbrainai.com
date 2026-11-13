@@ -5,8 +5,8 @@
 // opening a weakness lets that strip's dots regroup into a disc with report names listed either side.
 import { SEVERITIES } from "@/lib/taxonomy";
 import { clip, money, num, plural } from "./format";
-import { DISC, DOT0P, GEO_V, PITCH, R0P, TAU, angDiff, cubicAt, quadAt } from "./layout";
-import type { CNode, Dial, Focus, Geo, Lens, Model, Node, PNode, RNode, WNode } from "./layout";
+import { DISC, GEO_V, TAU, angDiff, cubicAt, quadAt } from "./layout";
+import type { CNode, Dial, Focus, Geo, Lens, Model, Node, PNode, RNode, WNode, XNode } from "./layout";
 
 export type MapRefs = {
   focus: { current: Focus }; lens: { current: Lens };
@@ -28,19 +28,21 @@ export const namesPerPage = (h: number) => Math.max(4, Math.min(13, Math.floor((
 
 export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model, refs: MapRefs, hooks: MapHooks): () => void {
   const g = cv.getContext("2d")!;
-  const { progs, rbp, ring } = model;
-  // Two dials share all of the drawing below: vulnerabilities, and CVEs (where a class is a year and a strip is a band).
-  const vuln: Dial = { classes: model.classes, weaks: model.weaks, links: model.links, rb: model.rb, gap: model.gap, geo: GEO_V, cve: false };
-  let { classes, weaks, links, rb, gap } = vuln, G: Geo = GEO_V, isCve = false, noun = "report";
+  const { progs, ring, orbits } = model;
+  // Every view is a dial drawn by the same code below: vulnerabilities; CVEs (a class is a year, a strip a band);
+  // the Programs index (a class is a letter, a strip a program); and a letter's own dial (a class is a program,
+  // its strips what was reported to it and the domains it runs).
+  const vuln: Dial = { classes: model.classes, weaks: model.weaks, links: model.links, rb: model.rb, gap: model.gap, geo: GEO_V, kind: "v" };
+  let { classes, weaks, links, rb, gap } = vuln, G: Geo = GEO_V, kind: Dial["kind"] = "v", isCve = false, isIndex = false, isProg = false, noun = "report";
   let maxLink = Math.max(1, ...links.map((l) => l.n));
   const setDial = () => {
-    const d = refs.lens.current === "cves" ? model.cve : vuln;
+    const lens = refs.lens.current, d = lens === "cves" ? refs.focus.current.group?.sub ?? model.cve : lens === "programs" ? refs.focus.current.group?.sub ?? model.programs : vuln;
     if (d.classes === classes) return;
-    ({ classes, weaks, links, rb, gap } = d); G = d.geo; isCve = d.cve; noun = isCve ? "CVE" : "report";
+    ({ classes, weaks, links, rb, gap } = d); G = d.geo; kind = d.kind; isCve = kind === "c" || kind === "y"; isIndex = kind === "p" || kind === "y"; isProg = kind === "s";
+    noun = isCve ? "CVE" : "report";
     maxLink = Math.max(1, ...links.map((l) => l.n));
   };
   let ringSpin = 0, ringNow: { c: RNode; x: number; y: number }[] = [];
-  const cveTotal = model.cve.classes.reduce((t, c) => t + c.count, 0), cveExploited = model.cve.weaks.reduce((t, w) => t + (w.band === 0 ? w.count : 0), 0);
   const orbiters = progs.filter((p) => p.logo).slice(0, 36); // programs that drift along the two arcs beside the dial
   let orbit = 0, dtNow = 0, orbitNow: { p: PNode; x: number; y: number }[] = [];
   const ORBIT = 214, WIN = 0.5; // how far outside the bezel the arcs sit (px), and half their angular length
@@ -54,11 +56,11 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
   let W = 0, H = 0, dpr = 1, s0 = 1, rotNow = 0, cosR = 1, sinR = 0;
   let hover: Node | null = null, mouse = { x: -1, y: -1 };
   let drag: { x: number; y: number; cx: number; cy: number } | null = null, moved = false;
-  let lastFocus: Focus | null = null, lastLens: Lens | null = null, raf = 0, last = 0, born = 0, now = 0;
+  let lastFocus: Focus | null = null, lastDial: CNode[] | null = null, raf = 0, last = 0, born = 0, now = 0;
 
   let introTop = 0;
   const wide = () => W > 900;
-  const panelOpen = () => { const f = refs.focus.current; return !!(f.cls || f.prog); };
+  const panelOpen = () => { const f = refs.focus.current; return !!(f.cls || f.prog || f.group); };
   const S = (x: number, y: number): [number, number] => {
     const xr = x * cosR - y * sinR, yr = x * sinR + y * cosR;
     return [(xr - cam.x) * cam.s + cam.ax, (yr - cam.y) * cam.s + cam.ay];
@@ -83,16 +85,6 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
   const retarget = () => {
     setDial();
     const f = refs.focus.current, st = stage(), cx = (st.x0 + st.x1) / 2, cy = (st.y0 + st.y1) / 2;
-    if (refs.lens.current === "programs") {
-      if (f.prog) {
-        // Turn the program to the left (up on a narrow screen) and fit its strip, from its logo out to its tip.
-        const p = f.prog, w = wide(), rot = near((w ? Math.PI : -Math.PI / 2) - p.a), r0 = (p.lr || R0P) - p.ls - 14, r1 = p.tip + 14;
-        const box = w ? { x0: st.x0 + 250, x1: st.x1 - 90, y0: st.y0 + 30, y1: st.y1 - 30 } : { x0: st.x0 + 16, x1: st.x1 - 16, y0: st.y0 + 26, y1: st.y1 - 30 };
-        const sc = Math.min(((w ? box.x1 - box.x0 : box.y1 - box.y0)) / (r1 - r0), 1.5), mid = -(r0 + r1) / 2;
-        Object.assign(tgt, { x: w ? mid : 0, y: w ? 0 : mid, s: sc, rot, ax: (box.x0 + box.x1) / 2, ay: (box.y0 + box.y1) / 2 });
-      } else Object.assign(tgt, { x: 0, y: 0, s: dialScale(st, rbp), rot: near(0), ax: cx, ay: cy });
-      return;
-    }
     if (f.weak && !f.weak.flat) {
       // The class is turned to the top; the camera sits on the disc the weakness opens into.
       const w = f.weak, rot = near(-Math.PI / 2 - w.cls.a), a = w.a + rot;
@@ -105,7 +97,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
       const grow = (x: number, y: number) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
       for (const w of c.weaks) {
-        const a = w.a + rot, ux = Math.cos(a), uy = Math.sin(a), half = (w.cols * G.PITCH) / 2;
+        const a = w.a + rot, ux = Math.cos(a), uy = Math.sin(a), half = (w.cols * G.PITCH * w.pk) / 2;
         for (const r of [G.R0 - 4, w.tip + 4]) for (const sg of [-1, 1]) grow(ux * r - uy * half * sg, uy * r + ux * half * sg);
       }
       const na = c.a + rot, nx = Math.cos(na) * G.R1, ny = Math.sin(na) * G.R1;
@@ -116,7 +108,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
       const sc = Math.min((box.x1 - box.x0) / (x1 - x0), (box.y1 - box.y0) / (y1 - y0), 3.6);
       Object.assign(tgt, { x: (x0 + x1) / 2, y: (y0 + y1) / 2, s: sc, rot, ax: (box.x0 + box.x1) / 2, ay: (box.y0 + box.y1) / 2 });
     } else {
-      Object.assign(tgt, { x: 0, y: 0, s: dialScale(st, rb, isCve ? -80 : W >= 1280 && !panelOpen() ? 66 : 0), rot: near(0), ax: cx, ay: cy });
+      Object.assign(tgt, { x: 0, y: 0, s: dialScale(st, rb, isCve ? -80 : kind !== "v" ? -60 : W >= 1280 && !panelOpen() ? 66 : 0), rot: near(0), ax: cx, ay: cy });
     }
   };
   const size = () => {
@@ -163,7 +155,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
   type Laid = { L: Lab; ex: number; ey: number; rect: number[]; side: CanvasTextAlign; tx: number; y0: number };
   let labs: Lab[] = [], occ: number[][] = [], placed: { r: number[]; n: Node }[] = [], laid: Laid[] = [], labKey = "";
   const spot = new Map<string, number>(); // which candidate position each label last used, so it does not jump when hovered
-  const nodeKey = (n: Node | null) => (!n ? "" : n.k === "leaf" ? "r" + n.d[0] : n.k === "weak" ? "w" + n.cls.id + n.name : n.k === "cls" ? "c" + n.id : n.k === "ring" ? "g" + n.id : "p" + n.name);
+  const nodeKey = (n: Node | null) => (!n ? "" : n.k === "leaf" ? "r" + n.d[0] : n.k === "weak" ? "w" + n.cls.id + n.name : n.k === "cls" ? "c" + n.id : n.k === "ring" ? "g" + n.id : n.k === "x" ? "x" + n.id : "p" + n.name);
   const hits = (b: number[]) => occ.some((r) => b[0] < r[2] && b[2] > r[0] && b[1] < r[3] && b[3] > r[1]);
 
   const place = (L: Lab): Laid | null => {
@@ -213,19 +205,32 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
     if (!im) { im = new Image(); im.src = p.logo; logos.set(p.name, im); }
     return im;
   };
-  const classOf = (n: Node | null): CNode | null => (!n ? null : n.k === "cls" ? n : n.k === "weak" ? n.cls : n.k === "leaf" ? n.w.cls : null);
+  /** How large a class's node is drawn. A month's hub stops growing when zoomed in close, so it never outweighs its fan. */
+  const nodeR = (c: CNode) => { const R = Math.max(4, c.r * cam.s); return kind === "c" ? Math.min(R, 36) : R; };
+  const classOf = (n: Node | null): CNode | null => (!n ? null : n.k === "cls" ? n : n.k === "weak" ? n.cls : n.k === "leaf" ? n.w.cls : n.k === "x" ? n.hub : null);
 
   const drawDial = (intro: number, f: Focus) => {
-    const k = cam.s, [ox, oy] = S(0, 0), pitch = G.PITCH * k, fine = pitch >= 2.4, st = stage();
+    const k = cam.s, [ox, oy] = S(0, 0), st = stage();
     const hc = classOf(hover), lead = f.cls || hc, foot = f.prog;
     // How strongly each class is drawn: the open class in full, the one under the cursor next, the rest stepped back.
     const shade = (c: CNode) => intro * (f.cls ? (c === f.cls ? 1 : c === hc ? 0.62 : f.weak ? 0.08 : 0.24) : hc ? (c === hc ? 1 : hc.shared.has(c) ? 0.85 : 0.45) : 1);
 
-    if (isCve && !f.cls && G.R1 * k > 90) {
-      text(num(cveTotal), ox, oy - 4, intro, 30, "center");
-      text("registered CVEs", ox, oy + 16, intro * 0.55, 11, "center");
-      text(`${num(cveExploited)} exploited in the wild`, ox, oy + 36, intro, 11.5, "center", RED);
+    if (kind === "c" && !f.cls && f.group && G.R1 * k > 90) { // a year's dial carries its year at the centre
+      text(f.group.id, ox, oy + 8, intro * 0.92, 44, "center");
+      text(`${num(f.group.count)} CVEs`, ox, oy + 30, intro * 0.55, 11, "center");
+      if (f.group.hot) text(`${num(f.group.hot)} exploited in the wild`, ox, oy + 48, intro, 11.5, "center", RED);
     }
+    if (kind === "y" && !f.cls && G.R1 * k > 90) {
+      text(num(model.cveTotal), ox, oy - 4, intro, 30, "center");
+      text("registered CVEs", ox, oy + 16, intro * 0.55, 11, "center");
+      text(`${num(model.cveHot)} exploited in the wild`, ox, oy + 36, intro, 11.5, "center", RED);
+    }
+    if (isProg && !f.cls && f.group && G.R1 * k > 90) { // a letter's dial carries its letter at the centre
+      text(f.group.id, ox, oy + 17, intro * 0.92, 50, "center");
+      text(plural(classes.length, "program"), ox, oy + 40, intro * 0.55, 11, "center");
+    }
+    if (kind !== "p") logoNow = [];
+    if (kind !== "y") coreNow = [];
     // Guide rings and the centre mark.
     g.lineWidth = 1; g.setLineDash([1, 5]); g.strokeStyle = `rgba(${INK},${0.14 * intro})`;
     circle(ox, oy, G.R1 * k); g.stroke(); circle(ox, oy, G.R0 * k); g.stroke(); g.setLineDash([]);
@@ -260,13 +265,14 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
 
     const strip = (w: WNode, sh: number) => {
       const a = w.a + rotNow, ux = Math.cos(a), uy = Math.sin(a), [sx, sy] = P(G.DOT0, w.a);
+      const plain = w.plain, pitch = G.PITCH * w.pk * k, fine = pitch >= (plain ? 1.5 : 2.4); // a strip's own dot spacing on screen
       const dux = ux * pitch, duy = uy * pitch, dtx = -uy * pitch, dty = ux * pitch;
       const ex = sx + dux * w.rows, ey = sy + duy * w.rows, m = w.cols * pitch + 40 + (w.bloom > 0 ? w.discR * 2.2 * k : 0);
       if (Math.max(sx, ex) < -m || Math.min(sx, ex) > W + m || Math.max(sy, ey) < -m || Math.min(sy, ey) > H + m) return;
       const on = f.weak === w, hov = hover === w;
       const al = sh * (f.weak && f.cls === w.cls && !on ? 0.18 : 1) * (foot ? 0.45 : 1), h0 = (w.cols - 1) / 2;
       const bl = w.bloom > 0.001 ? ease(w.bloom) : 0;
-      const band = isCve ? w.sev.charCodeAt(0) - 48 : -1, tone = band === 4 ? RED : INK, level = [0.26, 0.4, 0.62, 0.96, 1][band] ?? 0;
+      const band = plain ? w.sev.charCodeAt(0) - 48 : -1, tone = band === 4 ? RED : INK, level = [0.26, 0.4, 0.62, 0.96, 1][band] ?? 0;
 
       if (bl > 0) {
         // Opening: every dot travels from its place in the strip to its place in a disc.
@@ -285,7 +291,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
         }
         const from = Math.max(1.3, pitch * 0.46), zoom = Math.min(k, 3.2);
         for (const strong of [false, true]) {
-          g.fillStyle = isCve ? `rgba(${tone},${Math.max(level, 0.7) * al})` : `rgba(${INK},${(strong ? 0.96 : 0.6) * al})`;
+          g.fillStyle = plain ? `rgba(${tone},${Math.max(level, 0.7) * al})` : `rgba(${INK},${(strong ? 0.96 : 0.6) * al})`;
           for (let i = 0; i < w.n; i++) {
             const sev = w.sev.charCodeAt(i) - 48;
             if ((sev >= 3) !== strong) continue;
@@ -302,10 +308,52 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
       }
       buffers.delete(w);
 
-      if (!fine) {
-        // From far away a strip is ruled lines, one per row of reports: crisp at any angle.
-        g.strokeStyle = isCve ? `rgba(${tone},${Math.min(1, level + (hov || on ? 0.25 : 0)) * al})` : `rgba(${INK},${(hov ? 0.95 : 0.55) * al})`; g.lineWidth = Math.max(0.6, pitch * 0.5); g.beginPath();
-        for (let i = 0; i < w.rows; i++) {
+      if (w.runs) {
+        // A month on the CVE index. Its dots run from the most serious at the root to the least at the tip, each band in its own tone.
+        const half = w.cols / 2, glow = hov ? 0.25 : 0, LEVEL = [0.26, 0.4, 0.62, 0.96, 1];
+        let i0 = 0;
+        if (!fine) {
+          // Far away: fine hatching rather than a solid block, and the exploited and ready-to-check CVEs as heavier lines
+          // at the root, so that they can be seen however small the month is drawn.
+          const step = Math.max(1, Math.ceil(2.4 / pitch));
+          let root = 0;
+          for (const [d, n] of w.runs) {
+            const r0 = Math.floor(i0 / w.cols), r1 = Math.ceil((i0 + n) / w.cols); i0 += n;
+            if (d >= 3) {
+              const th = Math.max(d === 4 ? 2.6 : 1.7, (r1 - r0) * pitch), o = root + th / 2 + r0 * pitch; root += th + 1 - (r1 - r0) * pitch;
+              g.strokeStyle = `rgba(${d === 4 ? RED : INK},${Math.min(1, LEVEL[d] + glow) * al})`; g.lineWidth = th; g.beginPath();
+              g.moveTo(sx + ux * o - dtx * half, sy + uy * o - dty * half); g.lineTo(sx + ux * o + dtx * half, sy + uy * o + dty * half); g.stroke();
+            } else {
+              g.strokeStyle = `rgba(${INK},${Math.min(1, LEVEL[d] + 0.14 + glow) * al})`; g.lineWidth = 0.7; g.beginPath();
+              for (let r = Math.ceil(r0 / step) * step; r < r1; r += step) {
+                const x = sx + ux * root + dux * r - dtx * half, y = sy + uy * root + duy * r - dty * half;
+                g.moveTo(x, y); g.lineTo(x + dtx * w.cols, y + dty * w.cols);
+              }
+              g.stroke();
+            }
+          }
+          g.lineWidth = 1;
+        } else {
+          const z0 = Math.max(1.2, pitch * 0.5), reach = half * pitch + 4;
+          for (const [d, n] of w.runs) {
+            g.fillStyle = `rgba(${d === 4 ? RED : INK},${Math.min(1, LEVEL[d] + glow) * al})`;
+            for (let row = Math.floor(i0 / w.cols), last = Math.floor((i0 + n - 1) / w.cols); row <= last; row++) {
+              const mx = sx + dux * row, my = sy + duy * row;
+              if (mx < -reach || mx > W + reach || my < -reach || my > H + reach) continue;
+              for (let col = Math.max(i0, row * w.cols) - row * w.cols, end = Math.min(i0 + n, (row + 1) * w.cols) - row * w.cols; col < end; col++) {
+                const px = mx + dtx * (col - h0), py = my + dty * (col - h0);
+                if (px > -2 && px < W + 2 && py > -2 && py < H + 2) g.fillRect(px - z0 / 2, py - z0 / 2, z0, z0);
+              }
+            }
+            i0 += n;
+          }
+        }
+      } else if (!fine) {
+        // From far away a strip is ruled lines, one per row of reports: crisp at any angle. A dense one-tone strip is
+        // hatched instead (every few rows), so it reads as a texture and never as a solid block.
+        const step = plain ? Math.max(1, Math.ceil(2 / pitch)) : 1;
+        g.strokeStyle = plain ? `rgba(${tone},${Math.min(1, level + (step > 1 ? 0.12 : 0) + (hov || on ? 0.25 : 0)) * al})` : `rgba(${INK},${(hov ? 0.95 : 0.55) * al})`; g.lineWidth = step > 1 ? 0.7 : Math.max(0.6, pitch * 0.5); g.beginPath();
+        for (let i = 0; i < w.rows; i += step) {
           const cnt = i < w.rows - 1 ? w.cols : w.n - w.cols * (w.rows - 1), x = sx + dux * i - dtx * (w.cols / 2), y = sy + duy * i - dty * (w.cols / 2);
           g.moveTo(x, y); g.lineTo(x + dtx * cnt, y + dty * cnt);
         }
@@ -313,7 +361,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
       } else {
         // Close enough to tell reports apart: one square each, brighter and larger for high and critical.
         const z0 = Math.max(1.3, pitch * 0.46);
-        if (isCve) { // one tone for the whole strip; only the rows and dots on screen are drawn, as a strip can hold tens of thousands
+        if (plain) { // one tone for the whole strip; only the rows and dots on screen are drawn, as a strip can hold tens of thousands
           g.fillStyle = `rgba(${tone},${Math.min(1, level + (hov || on ? 0.25 : 0)) * al})`;
           const reach = (w.cols * pitch) / 2 + 4;
           for (let row = 0; row < w.rows; row++) {
@@ -359,12 +407,21 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
 
     // Class nodes.
     for (const c of classes) {
-      const [x, y] = P(G.R1, c.a), R = Math.max(4, c.r * k), hot = c === lead, al = shade(c);
-      g.fillStyle = BG; g.strokeStyle = `rgba(${hot ? HOT : INK},${al})`; g.lineWidth = hot ? 1.9 : 1.3; circle(x, y, R); g.fill(); g.stroke(); g.lineWidth = 1;
-      g.strokeStyle = `rgba(${INK},${0.5 * al})`; circle(x, y, R * 0.58); g.stroke();
-      if (R >= 14) text(c.id, x, y + 3.5, al, Math.min(11, R * 0.6), "center", hot ? HOT : INK);
+      const [x, y] = P(G.R1, c.a), R = nodeR(c), hot = c === lead, al = shade(c);
+      // A letter's hub is a solid key, like the keys of a dial, so it is never mistaken for a program without a logo.
+      g.fillStyle = isIndex && R >= 7 ? `rgba(${hot ? HOT : INK},${Math.max(0.25, al)})` : BG;
+      g.strokeStyle = `rgba(${hot ? HOT : INK},${al})`; g.lineWidth = hot ? 1.9 : 1.3; circle(x, y, R); g.fill(); g.stroke(); g.lineWidth = 1;
+      if (!c.prog && !isIndex) { g.strokeStyle = `rgba(${INK},${0.5 * al})`; circle(x, y, R * 0.58); g.stroke(); }
+      if (c.prog) { if (R >= 3.5) drawLogo(c.prog, x, y, R * (R < 6 ? 1 : 0.8), al, hot); } // a program is shown by its logo
+      else if (isIndex && R >= 7) { // dark on the key; drawn on the canvas, as the text layer outlines its letters in the background colour
+        g.font = `500 ${Math.min(14, R * 1.05).toFixed(1)}px ${family}`; g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = BG; g.fillText(c.short ?? c.id, x, y + 0.5);
+      }
+      else if (R >= (isCve ? 10 : 14)) text(c.short ?? c.id, x, y + 3.5, al, Math.min(11, R * (isCve ? 0.7 : 0.6)), "center", hot ? HOT : INK);
       else { g.fillStyle = `rgba(${hot ? HOT : INK},${al})`; circle(x, y, 1.6); g.fill(); }
     }
+
+    if (kind === "p") drawLogos(intro);
+    if (kind === "y") drawCore(intro);
 
     // Signals. Each one rides a drawn line from one node's edge to the other's at a steady speed, then the
     // line rests. Links carry them between classes; branches carry them inward from the weaknesses.
@@ -403,24 +460,26 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
     // ---- labels ----
     if (!f.cls) {
       // Overview: class names round the bezel. They step clear of the corner text.
-      if (!foot && !panelOpen() && wide()) occ.push([20, H - 176, 352, H - 22], [W - 548, H - 112, W - 26, H - 20]);
+      if (!foot && !panelOpen() && wide()) occ.push([20, H - 176, 352, H - 22], [W - 580, H - 134, W - 26, H - 20]);
       let fp: Map<CNode, number> | null = null;
       if (foot) { fp = new Map(); for (const [w, dots] of refs.footprint.current) fp.set(w.cls, (fp.get(w.cls) || 0) + dots.length); }
       for (const c of classes) {
         const [bx, by] = P(rb, c.a), hot = c === hc, got = fp?.get(c) || 0, shares = !fp && !!hc && hc !== c && hc.shared.has(c);
         labs.push({
-          n: c, ax: bx, ay: by, name: c.name, nameHot: hot, px: 12.5, pr: c.count, dir: c.a + rotNow, reach: ringOn(f) ? 38 : 13,
-          sub: fp ? (got ? `${num(got)} from ${clip(foot!.name, 20)}` : "none from this program") : shares ? `${num(hc!.shared.get(c)!)} shared with ${hc!.name}` : plural(c.count, noun) + (isCve && c.weaks[0]?.band === 0 ? `, ${num(c.weaks[0].count)} exploited` : ""),
+          n: c, ax: bx, ay: by, name: kind === "p" ? clip([...c.weaks].sort((x, y) => y.count - x.count)[0]?.name || c.name, 22) : clip(c.name, 26), nameHot: hot, px: 12.5, pr: c.count, dir: c.a + rotNow, reach: ringOn(f) ? 38 : 13,
+          sub: fp ? (got ? `${num(got)} from ${clip(foot!.name, 20)}` : "none from this program") : shares ? `${num(hc!.shared.get(c)!)} shared with ${hc!.name}`
+            : kind === "p" ? `${c.id}: ${plural(c.weaks.length, "program")}` // each letter is named by its biggest program
+            : plural(c.count, noun) + (c.hot ? `, ${num(c.hot)} exploited` : "") + (c.prog?.surface ? `, ${num(c.prog.surface)} subdomains` : ""),
           subHot: fp ? got > 0 : shares, al: shade(c) * (fp && !got ? 0.5 : 1), hot,
         });
       }
     } else {
-      const c = f.cls, [nx, ny] = P(G.R1, c.a), nr = Math.max(4, c.r * k);
+      const c = f.cls, [nx, ny] = P(G.R1, c.a), nr = nodeR(c);
       if (!f.weak || f.weak.flat) {
         if (wide()) labs.push({ n: null, ax: nx, ay: ny, id: c.tag, name: c.name, sub: plural(c.count, noun) + (c.bounty ? `  ${money(c.bounty)}` : ""), subHot: true,
           al: intro, hot: false, px: 13, pr: 3e9, dir: 0, reach: 0, lead: false, fix: { x: nx, y: ny + nr + 28, side: "center" } });
         const tips = c.weaks.map((w) => ({ w, p: P(w.tip + 5, w.a) }));
-        const entry = (w: WNode) => `${w.tag}  ${plural(w.count, noun)}${w.bounty ? "  " + money(w.bounty) : ""}`;
+        const entry = (w: WNode) => `${w.tag}  ${plural(w.count, w.unit || noun)}${w.bounty ? "  " + money(w.bounty) : ""}`;
         if (wide()) {
           // Its weaknesses, named in one column level with the tips of their strips, biggest first when room runs out.
           const per = Math.max(4, Math.floor((st.y1 - st.y0 - 30) / ROW)), colX = Math.min(P(c.bz, c.a)[0], ...tips.map((q) => q.p[0])) - 16; // just outside the bezel
@@ -445,8 +504,8 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
         } // on a narrow screen the panel below the map lists them instead
       } else {
         // An open weakness: its title above the disc, its reports named in two columns either side.
-        const w = f.weak, [dcx, dcy] = P(w.discAt, w.a), R = w.discR * k, buf = buffers.get(w);
-        if (wide()) labs.push({ n: null, ax: dcx, ay: dcy, id: w.tag, name: clip(w.name, 48), sub: plural(w.count, noun) + (w.bounty ? `  ${money(w.bounty)}` : ""), subHot: true,
+        const w = f.weak, [dcx, dcy] = P(w.discAt, w.a), R = w.discR * k, buf = buffers.get(w), host = isProg && w.plain; // a dot is a host name, not a report
+        if (wide()) labs.push({ n: null, ax: dcx, ay: dcy, id: w.tag, name: clip(w.name, 48), sub: plural(w.count, w.unit || noun) + (w.bounty ? `  ${money(w.bounty)}` : ""), subHot: true,
           al: intro, hot: false, px: 13, pr: 3e9, dir: 0, reach: 0, lead: false, fix: { x: dcx, y: dcy - R - 36, side: "center" } });
         if (buf && w.bloom > 0.85 && w.loaded && wide()) {
           const per = namesPerPage(H), from = Math.min(refs.colPage.current * per, Math.max(0, w.leaves.length - 1));
@@ -454,15 +513,15 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
           [top.slice(0, half), top.slice(half)].forEach((col, si) => {
             col.sort((a, b) => a.y - b.y);
             const y0 = dcy - ((col.length - 1) * ROW) / 2;
-            col.forEach(({ l, x, y }, i) => labs.push({ n: l, ax: x, ay: y, id: isCve ? `${l.d[0]}  ${l.d[4]}% likely` : [`#${l.d[0]}`, l.d[5], money(l.d[3])].filter(Boolean).join("  "), name: clip(l.d[1] || "No details stored", 42), al: 1,
+            col.forEach(({ l, x, y }, i) => labs.push({ n: l, ax: x, ay: y, id: host ? "" : isCve ? (l.d[1] ? `${l.d[0]}  ${l.d[4]}% likely` : `${l.d[4]}% likely`) : [`#${l.d[0]}`, isProg ? "" : l.d[5], money(l.d[3])].filter(Boolean).join("  "), name: clip(host ? String(l.d[0]) : l.d[1] || (isCve ? String(l.d[0]) : "No details stored"), 42), al: 1,
               hot: hover === l || f.leaf === l, px: 11, pr: 1e8 - i, dir: 0, reach: 0, fix: { x: si ? dcx + R + 44 : dcx - R - 44, y: y0 + i * ROW, side: si ? "left" : "right" } }));
           });
         }
         const hl = hover?.k === "leaf" && hover.w === w ? hover : f.leaf && f.leaf.w === w ? f.leaf : null;
         if (hl && buf && hl.i < w.n && !labs.some((q) => q.n === hl)) {
           const d = hl.d, x = buf[hl.i * 2], y = buf[hl.i * 2 + 1];
-          labs.push({ n: hl, ax: x, ay: y, id: isCve ? String(d[0]) : `#${d[0]}`, name: clip(d[1] || "No details stored for this one", 64),
-            sub: isCve ? `${d[4]}% likely to be exploited` : [d[5], d[2] ? SEVERITIES[d[2]] : "", money(d[3]), d[4] ? `${d[4]} votes` : ""].filter(Boolean).join("   "),
+          labs.push({ n: hl, ax: x, ay: y, id: host ? "" : isCve ? String(d[0]) : `#${d[0]}`, name: clip(host ? String(d[0]) : d[1] || (isCve ? String(d[0]) : "No details stored for this one"), 64),
+            sub: host ? "" : isCve ? `${d[4]}% likely to be exploited` : [d[5], d[2] ? SEVERITIES[d[2]] : "", money(d[3]), d[4] ? `${d[4]} votes` : ""].filter(Boolean).join("   "),
             subHot: true, al: 1, hot: true, px: 11.5, pr: 0, dir: Math.atan2(y - dcy, x - dcx), reach: 13 });
         }
       }
@@ -472,23 +531,93 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
     // A strip under the cursor that has no name on screen yet gets one.
     if (hover?.k === "weak" && hover !== f.weak && !labs.some((q) => q.n === hover)) {
       const w = hover, p = P(w.tip + 5, w.a);
-      labs.push({ n: w, ax: p[0], ay: p[1], id: `${w.tag}  ${plural(w.count, noun)}`, name: clip(w.name, 44), al: 1, hot: true, px: 11.5, pr: 0, dir: w.a + rotNow, reach: 14 });
+      labs.push({ n: w, ax: p[0], ay: p[1], id: `${w.tag}  ${plural(w.count, w.unit || noun)}`, name: clip(w.name, 44), al: 1, hot: true, px: 11.5, pr: 0, dir: w.a + rotNow, reach: 14 });
     }
   };
 
   const drawLogo = (p: PNode, x: number, y: number, R: number, al: number, hi: boolean) => {
     const im = getLogo(p), ready = !!im && im.complete && im.naturalWidth > 0;
     g.globalAlpha = al;
-    g.fillStyle = ready ? `rgb(${INK})` : BG; circle(x, y, R); g.fill();
+    g.fillStyle = ready ? `rgb(${INK})` : "#232017"; circle(x, y, R); g.fill();
     if (ready) { g.save(); circle(x, y, Math.max(1, R - 0.5)); g.clip(); g.drawImage(im!, x - R, y - R, R * 2, R * 2); g.restore(); }
     g.globalAlpha = 1;
-    g.strokeStyle = `rgba(${hi ? HOT : INK},${al * (hi ? 1 : 0.6)})`; g.lineWidth = hi ? 1.8 : 1; circle(x, y, R + (hi ? 2 : 0)); g.stroke(); g.lineWidth = 1;
-    if (!ready && R >= 7) text(p.name.slice(0, 1).toUpperCase(), x, y + R * 0.36, al * 0.8, Math.min(R * 0.95, 22), "center");
+    g.strokeStyle = `rgba(${hi ? HOT : INK},${al * (hi ? 1 : ready ? 0.6 : 0.28)})`; g.lineWidth = hi ? 1.8 : 1; circle(x, y, R + (hi ? 2 : 0)); g.stroke(); g.lineWidth = 1;
+    if (!ready && R >= 7) text(p.name.slice(0, 1).toUpperCase(), x, y + R * 0.36, al * 0.5, Math.min(R * 0.95, 22), "center"); // no logo: a quiet initial
+  };
+
+  // Inside the Programs index: every program's logo, on rings that turn slowly in alternate directions like the wheels
+  // of a clock. The turning stops while the cursor is inside, so a logo holds still to be read and clicked. The logo
+  // under the cursor is wired to its letter, named where it sits, and shown large at the centre.
+  const spins = orbits.map(() => 0);
+  let logoNow: { p: PNode; x: number; y: number; R: number }[] = [];
+  const drawLogos = (intro: number) => {
+    logoNow = [];
+    const k = cam.s, [ox, oy] = S(0, 0);
+    const inside = mouse.x > 0 && Math.hypot(mouse.x - ox, mouse.y - oy) < G.R1 * k;
+    if (!inside && !reduce && !drag) orbits.forEach((o, j) => { spins[j] = (spins[j] + ((j % 2 ? -1 : 1) * dtNow * 5.5) / 1000 / o.r) % TAU; });
+    g.setLineDash([1, 5]); g.strokeStyle = `rgba(${INK},${0.11 * intro})`;
+    for (const o of orbits) { circle(ox, oy, o.r * k); g.stroke(); }
+    g.setLineDash([]);
+    const hw = hover?.k === "weak" ? hover : null;
+    let lit: (typeof logoNow)[number] | null = null;
+    for (const p of progs) {
+      if (!p.strip || !p.os) continue;
+      const [x, y] = P(orbits[p.orbit].r, p.oa + spins[p.orbit]), R = Math.max(2.2, p.os * k), o = { p, x, y, R };
+      logoNow.push(o);
+      if (hw === p.strip) lit = o;
+      else if (x > -R && x < W + R && y > -R && y < H + R) drawLogo(p, x, y, R, intro * (hw ? 0.45 : 1), false);
+    }
+    const hole = (orbits.length ? orbits[orbits.length - 1].r - 26 : 120) * k; // the clear space at the centre, in pixels
+    if (lit) {
+      const p = lit.p, [hx, hy] = P(G.R1, p.strip!.cls.a), big = Math.max(lit.R + 3, 13);
+      g.strokeStyle = `rgba(${HOT},${0.85 * intro})`; g.beginPath(); g.moveTo(lit.x, lit.y); g.lineTo(hx, hy); g.stroke();
+      drawLogo(p, lit.x, lit.y, big, intro, true);
+      labs.push({ n: p.strip!, ax: lit.x, ay: lit.y, id: `${p.tag}  under ${p.strip!.cls.id}`, name: clip(p.name, 34),
+        sub: [plural(p.count, "report"), p.bounty ? money(p.bounty) : "", p.surface ? `${num(p.surface)} subdomains` : ""].filter(Boolean).join("   "), subHot: true,
+        al: 1, hot: true, px: 12.5, pr: 5e9, dir: Math.atan2(lit.y - oy, lit.x - ox), reach: big + 9 });
+      if (hole > 24) drawLogo(p, ox, oy, Math.min(hole * 0.66, 44), intro, true);
+    } else if (hole > 24) {
+      text(num(progs.length), ox, oy + 3, intro, Math.min(30, hole * 0.56), "center");
+      text("programs", ox, oy + 19, intro * 0.55, 10.5, "center");
+    }
+  };
+
+  // Inside the CVE index: every CVE known to be exploited, as a red dot in a bunch hanging inward from its year's key.
+  // A filled dot has a ready check; a hollow one does not. The dots glimmer; the one under the cursor is wired to its year and named.
+  let coreNow: { n: XNode; x: number; y: number }[] = [];
+  const drawCore = (intro: number) => {
+    coreNow = [];
+    if (!model.core.length) return;
+    const k = cam.s, ts = now / 1000, r = Math.max(1.2, 3.3 * k), lit = hover?.k === "x" ? hover : null;
+    g.strokeStyle = `rgba(${RED},${0.3 * intro})`; g.beginPath();
+    for (const [hub, b] of model.bunches) { const p0 = P(G.R1 - hub.r - 3, hub.a), p1 = P(b.at + b.r + 2, hub.a); g.moveTo(p0[0], p0[1]); g.lineTo(p1[0], p1[1]); }
+    g.stroke();
+    g.lineWidth = Math.max(0.7, r * 0.42);
+    model.core.forEach((n, i) => {
+      const [x, y] = S(n.x, n.y);
+      if (x < -6 || x > W + 6 || y < -6 || y > H + 6) return;
+      coreNow.push({ n, x, y });
+      if (n === lit) return;
+      const glim = reduce ? 0.9 : 0.66 + 0.34 * Math.sin(ts * (0.5 + hash(i) * 1.3) + hash(i + 7) * TAU);
+      const al = intro * glim * (lit && lit.hub !== n.hub ? 0.4 : 1);
+      if (n.check) { g.fillStyle = `rgba(${RED},${al})`; circle(x, y, r); g.fill(); }
+      else { g.strokeStyle = `rgba(${RED},${al})`; circle(x, y, r * 0.82); g.stroke(); }
+    });
+    g.lineWidth = 1;
+    if (lit) {
+      const [x, y] = S(lit.x, lit.y), [hx, hy] = P(G.R1, lit.hub.a);
+      g.strokeStyle = `rgba(${RED},${0.9 * intro})`; g.beginPath(); g.moveTo(x, y); g.lineTo(hx, hy); g.stroke();
+      g.fillStyle = `rgb(${RED})`; circle(x, y, Math.max(4, r + 2.5)); g.fill();
+      g.strokeStyle = `rgba(${RED},0.9)`; circle(x, y, Math.max(4, r + 2.5) + 3.5); g.stroke();
+      const [ox, oy] = S(0, 0);
+      labs.push({ n: lit, ax: x, ay: y, id: `${lit.id}   ${lit.likely}% likely${lit.check ? "   ready check" : ""}`, name: clip(lit.name || lit.id, 48),
+        sub: "Exploited in the wild. Click to open it.", subHot: true, al: 1, hot: true, px: 12.5, pr: 5e9, dir: Math.atan2(y - oy, x - ox) + Math.PI, reach: 14 });
+    }
   };
 
   // Round the vulnerability dial: the ids of the exploited CVEs listed most recently, turning slowly like a bezel.
   // Hovering stops them and names the one under the cursor; clicking opens it.
-  const ringOn = (f: Focus) => !isCve && wide() && !f.cls && !f.prog && ring.length > 0;
+  const ringOn = (f: Focus) => kind === "v" && wide() && !f.cls && !f.prog && ring.length > 0;
   const drawRing = (intro: number, f: Focus) => {
     ringNow = [];
     if (!ringOn(f)) return;
@@ -508,7 +637,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
   // Clicking one marks that program's reports on the dial. The drift pauses while the cursor is on an arc.
   const drawOrbit = (intro: number, f: Focus) => {
     orbitNow = [];
-    if (isCve || W < 1280 || f.cls || f.prog || !orbiters.length) return;
+    if (kind !== "v" || W < 1280 || f.cls || f.prog || !orbiters.length) return;
     const [ox, oy] = S(0, 0), Ro = rb * cam.s + ORBIT;
     g.strokeStyle = `rgba(${INK},${0.22 * intro})`; g.setLineDash([1, 5]);
     for (const mid of [0, Math.PI]) { g.beginPath(); g.arc(ox, oy, Ro, mid - WIN - 0.05, mid + WIN + 0.05); g.stroke(); }
@@ -526,85 +655,15 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
     });
   };
 
-  // The Programs dial: every program is a strip of its reports, the biggest at the top and smaller ones down both sides.
-  const drawProgs = (intro: number, f: Focus) => {
-    const k = cam.s, [ox, oy] = S(0, 0), pitch = PITCH * k, fine = pitch >= 2.4, ts = now / 1000;
-    g.lineWidth = 1; g.setLineDash([1, 5]); g.strokeStyle = `rgba(${INK},${0.14 * intro})`;
-    circle(ox, oy, R0P * k); g.stroke(); circle(ox, oy, (R0P - 64) * k); g.stroke(); g.setLineDash([]);
-    g.strokeStyle = `rgba(${INK},${0.3 * intro})`; g.beginPath();
-    g.moveTo(ox - 5, oy); g.lineTo(ox + 5, oy); g.moveTo(ox, oy - 5); g.lineTo(ox, oy + 5); g.stroke();
-    g.strokeStyle = `rgba(${INK},${0.34 * intro})`; circle(ox, oy, rbp * k); g.stroke();
-
-    progs.forEach((p) => {
-      const on = f.prog === p, hi = on || hover === p, al = intro * (f.prog && !on ? 0.16 : 1);
-      const a = p.a + rotNow, ux = Math.cos(a), uy = Math.sin(a), [sx, sy] = P(DOT0P, p.a);
-      const dux = ux * pitch, duy = uy * pitch, dtx = -uy * pitch, dty = ux * pitch, ex = sx + dux * p.rows, ey = sy + duy * p.rows;
-      const m = p.cols * pitch + 60;
-      if (Math.max(sx, ex) < -m || Math.min(sx, ex) > W + m || Math.max(sy, ey) < -m || Math.min(sy, ey) > H + m) return;
-      const col = hi ? HOT : INK;
-      if (!fine) {
-        g.strokeStyle = `rgba(${col},${(hi ? 1 : 0.55) * al})`; g.lineWidth = Math.max(0.6, pitch * 0.5); g.beginPath();
-        for (let r = 0; r < p.rows; r++) {
-          const cnt = r < p.rows - 1 ? p.cols : p.count - p.cols * (p.rows - 1), x = sx + dux * r - dtx * (p.cols / 2), y = sy + duy * r - dty * (p.cols / 2);
-          g.moveTo(x, y); g.lineTo(x + dtx * cnt, y + dty * cnt);
-        }
-        g.stroke(); g.lineWidth = 1;
-      } else {
-        const z = Math.max(1.3, pitch * 0.5), h0 = (p.cols - 1) / 2; g.fillStyle = `rgba(${col},${(hi ? 1 : 0.62) * al})`;
-        for (let n = 0; n < p.count; n++) { const row = (n / p.cols) | 0, lx = n - row * p.cols - h0; g.fillRect(sx + dux * row + dtx * lx - z / 2, sy + duy * row + dty * lx - z / 2, z, z); }
-      }
-    });
-    // Lines from the bigger programs' logos to their strips, and from whichever one is under the cursor or open.
-    progs.forEach((p, i) => {
-      const on = f.prog === p, hi = on || hover === p, al = intro * (f.prog && !on ? 0.16 : 1);
-      if (!p.lr || !(hi || p.count >= 100)) return;
-      const b0 = P(p.lr, p.la), b1 = P(R0P + 3, p.a);
-      g.strokeStyle = `rgba(${hi ? HOT : INK},${(hi ? 1 : 0.3) * al})`; g.beginPath(); g.moveTo(b0[0], b0[1]); g.lineTo(b1[0], b1[1]); g.stroke();
-      if (!reduce && al > 0.5) { // a signal runs in along the line, from the strip to the logo
-        const T = Math.hypot(b1[0] - b0[0], b1[1] - b0[1]) / k / SPEED, C = T + 3 + 9 * hash(i), u = (ts + hash(i + 70) * C) % C;
-        if (u < T) { const q = u / T; g.fillStyle = `rgba(${HOT},${al * Math.min(1, Math.sin(Math.PI * q) * 5)})`; circle(b1[0] + (b0[0] - b1[0]) * q, b1[1] + (b0[1] - b1[1]) * q, 1.7); g.fill(); }
-      }
-    });
-    // Every program's logo, inside the ring.
-    for (const p of progs) {
-      if (!p.lr) continue;
-      const on = f.prog === p, hi = on || hover === p, al = intro * (f.prog && !on ? 0.16 : 1), [lx, ly] = P(p.lr, p.la), R = Math.max(3, p.ls * k);
-      if (lx < -R || lx > W + R || ly < -R || ly > H + R) continue;
-      drawLogo(p, lx, ly, R, al, hi);
-      if (on) { // what gets reported here, as a ring of arcs round the logo, biggest class first from the top
-        const tot = p.all.reduce((sum, c) => sum + c[1], 0) || 1; let a0 = -Math.PI / 2;
-        g.lineWidth = 3;
-        p.all.forEach(([, n], j) => { const a1 = a0 + (n / tot) * TAU; g.strokeStyle = `rgba(${INK},${j % 2 ? 0.4 : 0.95})`; g.beginPath(); g.arc(lx, ly, R + 9, a0 + 0.03, Math.max(a0 + 0.04, a1 - 0.03)); g.stroke(); a0 = a1; });
-        g.lineWidth = 1;
-      }
-    }
-
-    // Names round the bezel for as many of the bigger programs as fit, clear of the corner text.
-    if (!panelOpen() && wide()) occ.push([20, H - 176, 352, H - 22], [W - 548, H - 112, W - 26, H - 20]);
-    const name = (p: PNode, i: number, hot: boolean) => {
-      const [x, y] = P(p.tip + 5, p.a);
-      labs.push({ n: p, ax: x, ay: y, id: hot ? p.tag : undefined, name: clip(p.name, hot ? 34 : 22), nameHot: hot, sub: hot || i < 12 ? plural(p.count, "report") + (hot && p.bounty ? `  ${money(p.bounty)}` : "") : undefined,
-        subHot: hot, al: intro, hot, px: 11.5, pr: hot ? 4e9 : p.count, dir: p.a + rotNow, reach: 12 });
-    };
-    if (f.prog) name(f.prog, 0, true);
-    else progs.slice(0, 80).forEach((p, i) => name(p, i, hover === p));
-    if (hover?.k === "prog" && hover !== f.prog && !labs.some((q) => q.n === hover)) name(hover, 99, true);
-  };
-
   // ---------- pointer ----------
   const pick = (mx: number, my: number): Node | null => {
     setDial();
     for (const q of placed) if (mx > q.r[0] && mx < q.r[2] && my > q.r[1] && my < q.r[3]) return q.n;
-    if (refs.lens.current === "programs") {
-      let hit: PNode | null = null, hd = 1e9;
-      for (const p of progs) if (p.lr) { const [x, y] = P(p.lr, p.la), d = Math.hypot(x - mx, y - my); if (d < Math.max(8, p.ls * cam.s + 2) && d < hd) { hd = d; hit = p; } }
-      if (hit) return hit;
-      const [wx, wy] = unS(mx, my), r = Math.hypot(wx, wy), a = Math.atan2(wy, wx);
-      if (r < R0P - 6 || r > rbp + 6) return null;
-      // The strip whose slice of the dial the cursor is in, as long as the cursor is not far beyond its tip.
-      let best: PNode | null = null, bd = 1e9;
-      for (const p of progs) { const d = Math.abs(angDiff(a, p.a)) * R0P - (p.cols * PITCH) / 2; if (d < bd) { bd = d; best = p; } }
-      return best && bd < Math.max(1.5, 5 / cam.s) && r < best.tip + 40 ? best : null;
+    for (const o of logoNow) if (Math.hypot(o.x - mx, o.y - my) < Math.max(7, o.R + 2)) return o.p.strip!; // a logo on the index stands for its program's strip
+    if (coreNow.length) { // the nearest exploited CVE, if the cursor is on one
+      let best: XNode | null = null, bd = Math.max(5, 3.3 * cam.s + 3);
+      for (const o of coreNow) { const d = Math.hypot(o.x - mx, o.y - my); if (d < bd) { bd = d; best = o.n; } }
+      if (best) return best;
     }
     for (const o of orbitNow) if (Math.hypot(o.x - mx, o.y - my) < 16) return o.p;
     for (const o of ringNow) if (Math.hypot(o.x - mx, o.y - my) < 20) return o.c;
@@ -628,7 +687,7 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
     if ((f.cls === c || (!f.cls && k > s0 * 1.7)) && r > G.R0 - 8) {
       let best: WNode | null = null, bd = 1e9;
       for (const w of c.weaks) {
-        const d = angDiff(a, w.a), along = r * Math.cos(d), lat = Math.abs(r * Math.sin(d)), half = (w.cols * G.PITCH) / 2 + Math.max(1.2, 5 / k);
+        const d = angDiff(a, w.a), along = r * Math.cos(d), lat = Math.abs(r * Math.sin(d)), half = (w.cols * G.PITCH * w.pk) / 2 + Math.max(1.2, 5 / k);
         if (along >= G.R0 - 6 && along <= w.tip + 6 && lat <= half && lat / half < bd) { bd = lat / half; best = w; }
       }
       if (best) return best;
@@ -653,8 +712,8 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
     now = t; setDial();
     const dt = Math.min(64, t - last); last = t;
     const e = reduce ? 1 : 1 - Math.exp(-dt / 190), lens = refs.lens.current, f = refs.focus.current;
-    if (lastLens !== lens) { // switching views is a cut with a fade-in, not a flight
-      const first = lastLens === null; lastLens = lens; retarget(); hover = null; labKey = "";
+    if (lastDial !== classes) { // moving to another dial (another view, or into or out of a letter) is a cut with a fade-in, not a flight
+      const first = lastDial === null; lastDial = classes; retarget(); hover = null; labKey = "";
       if (!first) { Object.assign(cam, tgt); born = t; }
     }
     if (lastFocus !== f) { lastFocus = f; retarget(); }
@@ -670,9 +729,9 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
     used = 0; labs = []; occ = [];
 
     {
-      if (lens === "programs") drawProgs(intro, f); else drawDial(intro, f);
+      drawDial(intro, f);
       // Laying labels out is the costly part, so it is only redone when the view, the cursor target or the data changes.
-      const key = `${cam.x.toFixed(2)}|${cam.y.toFixed(2)}|${cam.s.toFixed(4)}|${rotNow.toFixed(4)}|${cam.ax.toFixed(1)}|${cam.ay.toFixed(1)}|${W}x${H}|${labs.length}|${nodeKey(hover)}|${nodeKey(f.leaf || f.weak || f.cls || f.prog)}|${intro.toFixed(2)}|${refs.colPage.current}|${refs.dataVer.current}|${f.weak ? f.weak.bloom.toFixed(3) : ""}|${lens}`;
+      const key = `${cam.x.toFixed(2)}|${cam.y.toFixed(2)}|${cam.s.toFixed(4)}|${rotNow.toFixed(4)}|${cam.ax.toFixed(1)}|${cam.ay.toFixed(1)}|${W}x${H}|${labs.length}|${nodeKey(hover)}|${nodeKey(f.leaf || f.weak || f.cls || f.prog)}|${intro.toFixed(2)}|${refs.colPage.current}|${refs.dataVer.current}|${f.weak ? f.weak.bloom.toFixed(3) : ""}|${lens}|${f.group?.id || ""}`;
       if (key !== labKey) {
         labKey = key; laid = [];
         const fixed = occ.length; // areas reserved before any label is placed
@@ -726,8 +785,10 @@ export function startMap(cv: HTMLCanvasElement, svg: SVGSVGElement, model: Model
     cls: (id: string) => { const c = classes.find((x) => x.id === id); return c ? P(G.R1, c.a) : null; },
     weak: (name: string) => { const w = weaks.find((x) => x.name === name); return w ? (w.bloom > 0.5 ? P(w.discAt, w.a) : P((G.DOT0 + w.tip) / 2, w.a)) : null; },
     leaf: (name: string, i: number) => { const w = weaks.find((x) => x.name === name), b = w && buffers.get(w); return b ? [b[i * 2], b[i * 2 + 1]] : null; },
-    prog: (name: string) => { const p = progs.find((x) => x.name === name); return p ? (p.lr ? P(p.lr, p.la) : P((DOT0P + p.tip) / 2, p.a)) : null; },
+    prog: (name: string) => { const o = logoNow.find((x) => x.p.name === name); if (o) return [o.x, o.y]; const c = classes.find((x) => x.prog?.name === name); return c ? P(G.R1, c.a) : null; },
     orbit: () => orbitNow.map((o) => [o.p.name, o.x, o.y]),
+    logos: () => logoNow.length,
+    core: (id?: string) => { if (!id) return coreNow.length; const o = coreNow.find((x) => x.n.id === id); return o ? [o.x, o.y] : null; },
     ring: () => ringNow.map((o) => [o.c.id, o.x, o.y]),
     weakOf: (cls: string, name: string) => { const w = weaks.find((x) => x.cls.id === cls && x.name === name); return w ? (w.bloom > 0.5 ? P(w.discAt, w.a) : P((G.DOT0 + w.tip) / 2, w.a)) : null; },
     state: () => ({ s: cam.s, rot: cam.rot, hover: nodeKey(hover), settled: settled() }),

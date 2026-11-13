@@ -1,8 +1,8 @@
 /* eslint-disable @next/next/no-img-element */
 import Sheet from "@/components/Sheet";
-import { MAX_KEYS, currentUser, keyTotals, listKeys, signInLive } from "@/lib/auth";
+import { MAX_KEYS, currentUser, inviteOnly, isAdmin, keyTotals, listInvites, listKeys, listWaiting, mayUseApi, signInLive } from "@/lib/auth";
 import { SITE } from "@/lib/site";
-import { signOutAction } from "./actions";
+import { inviteAction, signOutAction, uninviteAction } from "./actions";
 import Keys, { DeleteAccount } from "./Keys";
 import s from "./account.module.css";
 
@@ -17,6 +17,7 @@ const ERRORS: Record<string, string> = {
 };
 const UNLOCKS: [string, string][] = [
   ["plan_tests", "Describe a feature and get the bug classes real reports found in features like it"],
+  ["get_attack_surface", "The subdomains known for a program, to choose where to look"],
   ["find_cves", "Known CVEs for the technologies a target runs, with the request that confirms each"],
   ["find_bypasses", "How researchers got past a WAF, filter, 2FA or an earlier fix, with the payloads they used"],
   ["find_payloads", "Payloads and techniques for 60+ bug classes, with filter-bypass variants"],
@@ -29,7 +30,7 @@ const UNLOCKS: [string, string][] = [
 const day = (d: string | null) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "never");
 
 export default async function Account({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const user = await currentUser(), error = ERRORS[(await searchParams).error || ""];
+  const user = await currentUser(), asked = (await searchParams).error || "", error = Object.hasOwn(ERRORS, asked) ? ERRORS[asked] : undefined;
   const out = user ? <form action={signOutAction}><button>Sign out</button></form> : null;
 
   if (!user) return (
@@ -43,6 +44,8 @@ export default async function Account({ searchParams }: { searchParams: Promise<
           {signInLive()
             ? <a className={s.google} href="/auth/google"><GoogleG />Continue with Google</a>
             : <p className={s.error}>Sign-in is not available on this site yet.</p>}
+          {inviteOnly() && <p className={s.fine}>API keys are by invitation for now. Anyone can sign in; keys unlock once your email address is invited.</p>}
+          <p className={s.fine}>By signing in you accept the <a href="/terms">terms</a>; the <a href="/privacy">privacy page</a> says what is kept.</p>
           <p className={s.fine}>New here? The same button creates your account. We keep only your name, email address and profile picture from Google, and you can delete your account at any time. The map and every write-up stay open without an account.</p>
         </section>
         <aside className={s.unlocks} aria-label="What a key unlocks">
@@ -54,7 +57,7 @@ export default async function Account({ searchParams }: { searchParams: Promise<
     </Sheet>
   );
 
-  const keys = listKeys(user.id), totals = keyTotals(user.id);
+  const keys = listKeys(user.id), totals = keyTotals(user.id), allowed = mayUseApi(user.email), admin = isAdmin(user.email), invites = admin ? listInvites() : [], waiting = admin ? listWaiting() : [];
   return (
     <Sheet here="account" className={s.page} actions={out}>
       <section className={s.who}>
@@ -69,7 +72,48 @@ export default async function Account({ searchParams }: { searchParams: Promise<
           <div><dt>{day(totals.lastUsed)}</dt><dd>last used</dd></div>
         </dl>
       </section>
-      <Keys keys={keys} max={MAX_KEYS} site={SITE.url} />
+      {allowed ? <Keys keys={keys} max={MAX_KEYS} site={SITE.url} /> : (
+        <section className={s.block}>
+          <h2>API access is by invitation</h2>
+          <p className={s.dim}>The API and MCP server are open to invited people for now. You are on the waiting list just by having signed in. To be let in sooner, ask <a href="https://x.com/hackerspider1" target="_blank" rel="noopener noreferrer">@hackerspider1</a> on X; once you are approved, this page lets you create keys. The map and every write-up stay open to everyone.</p>
+        </section>
+      )}
+      {admin && (
+        <section className={s.block}>
+          <h2>Invitations</h2>
+          <p className={s.dim}>{inviteOnly() ? "Only these email addresses may create and use API keys. Removing one stops that person's keys at once." : "Invitations are not being enforced: anyone who signs in can create keys. Set HEXBRAIN_INVITE_ONLY=true to enforce this list."}</p>
+          <form action={inviteAction} className={s.create}>
+            <input name="emails" placeholder="Email addresses, separated by commas or spaces" aria-label="Email addresses to invite" required />
+            <button>Invite</button>
+          </form>
+          {waiting.length > 0 && (<>
+            <h3 className={s.sub}>Signed in and waiting: {waiting.length}</h3>
+            {waiting.length > 1 && (
+              <form action={inviteAction} className={s.keyRow}>
+                <input type="hidden" name="emails" value={waiting.slice(0, 50).map((w) => w.email).join(",")} />
+                <div><b>Everyone waiting</b><small>{waiting.length > 50 ? "the first 50 at a time" : `all ${waiting.length}`}</small></div>
+                <button>Approve all</button>
+              </form>
+            )}
+            {waiting.map((w) => (
+              <form key={w.email} action={inviteAction} className={s.keyRow}>
+                <input type="hidden" name="emails" value={w.email} />
+                <div><b>{w.name || w.email}</b><small>{w.name ? `${w.email} · ` : ""}signed in {day(w.created_at)}</small></div>
+                <button>Approve</button>
+              </form>
+            ))}
+            <h3 className={s.sub}>Invited</h3>
+          </>)}
+          {invites.map((i) => (
+            <form key={i.email} action={uninviteAction} className={s.keyRow}>
+              <input type="hidden" name="email" value={i.email} />
+              <div><b>{i.email}</b><small>invited {day(i.created_at)} · {i.joined ? "has signed in" : "has not signed in yet"}</small></div>
+              <button>Remove</button>
+            </form>
+          ))}
+          {invites.length === 0 && <p className={s.dim}>Nobody is invited yet.</p>}
+        </section>
+      )}
       <section className={s.block}>
         <h2>Delete account</h2>
         <p className={s.dim}>Removes your profile and every key. Keys stop working straight away. This cannot be undone.</p>

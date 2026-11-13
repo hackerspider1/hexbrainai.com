@@ -38,7 +38,7 @@ export default async function Sheet({ here = "", className, actions, children }:
       <footer className={s.foot}>
         <span>{SITE.name}. Reports belong to their authors and the programs that disclosed them.</span>
         <span className={s.by}>Designed by <a href="https://github.com/hackerspider1" target="_blank" rel="noopener noreferrer">@hackerspider1</a> <span aria-label="with love" role="img">❤️</span></span>
-        <nav aria-label="More"><Link href="/about">About</Link><Link href="/browse">Browse</Link><Link href="/">Map</Link></nav>
+        <nav aria-label="More"><Link href="/about">About</Link><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/">Map</Link></nav>
       </footer>
     </div>
   );

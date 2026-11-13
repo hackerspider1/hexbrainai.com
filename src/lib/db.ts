@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { CLASSES, MENTIONS, OTHER, classOf, guessWeakness, sevIndex } from "./taxonomy";
+import { CLASSES, MENTIONS, OTHER, classOf, guessWeakness, sevIndex, STATUSES } from "./taxonomy";
 
 const dbPath = process.env.HEXBRAIN_DB || join(process.cwd(), "data", "hexbrain.db");
 let handle: DatabaseSync | null = null;
@@ -15,6 +15,9 @@ export function db(): DatabaseSync {
     if (existsSync(schema)) handle.exec(readFileSync(schema, "utf8"));
     if (!(handle.prepare("PRAGMA table_info(reports)").all() as { name: string }[]).some((c) => c.name === "weakness_guess"))
       handle.exec("ALTER TABLE reports ADD COLUMN weakness_guess TEXT");
+    if (!(handle.prepare("PRAGMA table_info(cve_map)").all() as { name: string }[]).some((c) => c.name === "month"))
+      handle.exec("ALTER TABLE cve_map ADD COLUMN month INTEGER NOT NULL DEFAULT 0");
+    handle.exec("CREATE INDEX IF NOT EXISTS cve_map_month ON cve_map(year, month, band, pos)");
     // Fill the full-text index once; after that the triggers keep it current.
     if (!handle.prepare("SELECT 1 FROM meta WHERE k = 'fts_built'").get()) {
       handle.exec("INSERT INTO reports_fts(reports_fts) VALUES ('rebuild')");
@@ -39,11 +42,16 @@ export type Leaf = [number | string, string, number, number, number, string];
 // without sending its title. Titles load per weakness, on demand.
 export type GraphWeakness = { name: string; count: number; bounty: number; sev: string };
 export type GraphClass = { id: string; name: string; count: number; bounty: number; weaknesses: GraphWeakness[] };
-export type GraphProgram = { name: string; count: number; bounty: number; logo: string | null; classes: [string, number][] };
+export type GraphProgram = {
+  name: string; count: number; bounty: number; logo: string | null; classes: [string, number][];
+  byClass: [cls: string, sev: string][]; // every class it has reports in, with one severity digit per report (most upvoted first)
+};
 // One year of the CVE map: how many CVEs sit in each band (exploited, ready check, likely, possible, unlikely).
-export type GraphYear = { year: number; bands: number[] };
+/** One year of CVEs: for each month (index 0 is "no date", 1 to 12 the months), how many fall in each of the five bands. */
+export type GraphYear = { year: number; months: number[][] };
 export type Graph = {
   cveYears: GraphYear[]; cveRing: { id: string; name: string }[];
+  surfaces: { program: string; total: number; branches: [name: string, domain: string, count: number][] }[]; // subdomains per program, already divided for drawing
   total: number; withBody: number; programs: number; weaknessCount: number; totalBounty: number;
   classes: GraphClass[]; links: [string, string, number][]; topPrograms: GraphProgram[];
 };
@@ -59,15 +67,18 @@ function classifyUntyped(d: DatabaseSync) {
   if (!rows.length) return;
   const upd = d.prepare("UPDATE reports SET weakness_guess = ? WHERE id = ?");
   d.exec("BEGIN");
-  for (const r of rows) upd.run(guessWeakness(r.title), r.id);
-  d.exec("COMMIT");
+  try { for (const r of rows) upd.run(guessWeakness(r.title), r.id); d.exec("COMMIT"); }
+  catch { d.exec("ROLLBACK"); } // for example the database is busy with an import: guess again next time, and never leave a transaction open
 }
 
-let cached: { at: number; graph: Graph } | null = null;
+// Building the graph reads every report, so it is kept until the data changes. SQLite's data_version moves when another
+// process (an import) writes to the file; our own writes, such as counting API requests, do not move it.
+let cached: { at: number; version: number; graph: Graph } | null = null;
+const dataVersion = (d: DatabaseSync) => (d.prepare("PRAGMA data_version").get() as { data_version: number }).data_version;
 
 export function getGraph(): Graph {
-  if (cached && Date.now() - cached.at < 5 * 60_000) return cached.graph;
-  const d = db();
+  const d = db(), version = dataVersion(d);
+  if (cached && cached.version === version && Date.now() - cached.at < 6 * 3600_000) return cached.graph;
   classifyUntyped(d);
   const rows = d.prepare(
     `SELECT id, title, severity, ${WEAK} AS weakness, bounty, votes, ${PROGRAM} AS program,
@@ -78,7 +89,7 @@ export function getGraph(): Graph {
   const classes = new Map<string, GraphClass>();
   const weak = new Map<string, GraphWeakness>();
   const dots = new Map<GraphWeakness, [number, number, number][]>(); // per weakness: [votes, id, severity]
-  const programs = new Map<string, { count: number; bounty: number; classes: Map<string, number> }>();
+  const programs = new Map<string, { count: number; bounty: number; classes: Map<string, number>; sev: Map<string, string> }>();
   const pairs = new Map<string, number>();
   let totalBounty = 0;
 
@@ -93,8 +104,9 @@ export function getGraph(): Graph {
     dots.get(w)!.push([r.votes || 0, r.id, sevIndex(r.severity)]);
     if (r.program) {
       let p = programs.get(r.program);
-      if (!p) programs.set(r.program, (p = { count: 0, bounty: 0, classes: new Map() }));
+      if (!p) programs.set(r.program, (p = { count: 0, bounty: 0, classes: new Map(), sev: new Map() }));
       p.count++; p.bounty += bounty; p.classes.set(def.id, (p.classes.get(def.id) || 0) + 1);
+      p.sev.set(def.id, (p.sev.get(def.id) || "") + sevIndex(r.severity)); // rows arrive in the order getProgramLeaves() returns them
     }
     // A report filed under one class that talks about another links the two.
     if (def.id !== OTHER.id) {
@@ -117,20 +129,27 @@ export function getGraph(): Graph {
   const logos = new Map((d.prepare("SELECT name, logo_file FROM programs WHERE logo_file IS NOT NULL").all() as { name: string; logo_file: string }[]).map((r) => [r.name, r.logo_file]));
   // Every program, biggest first. The map gives the first few dozen a logo and a name; the rest are dots on the same ring.
   const topPrograms = [...programs.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
-    .map(([name, p]) => ({ name, count: p.count, bounty: p.bounty, logo: logos.get(name) ?? null, classes: [...p.classes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6) }));
+    .map(([name, p]) => ({ name, count: p.count, bounty: p.bounty, logo: logos.get(name) ?? null, classes: [...p.classes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6),
+      byClass: [...p.sev.entries()].sort((a, b) => b[1].length - a[1].length) }));
   const withBody = (d.prepare("SELECT COUNT(*) n FROM reports WHERE body IS NOT NULL").get() as { n: number }).n;
 
   const yearOf = new Map<number, GraphYear>();
-  for (const r of d.prepare("SELECT year, band, COUNT(*) n FROM cve_map GROUP BY year, band ORDER BY year").all() as { year: number; band: number; n: number }[]) {
-    if (!yearOf.has(r.year)) yearOf.set(r.year, { year: r.year, bands: [0, 0, 0, 0, 0] });
-    yearOf.get(r.year)!.bands[r.band] = r.n;
+  for (const r of d.prepare("SELECT year, month, band, COUNT(*) n FROM cve_map GROUP BY year, month, band ORDER BY year").all() as { year: number; month: number; band: number; n: number }[]) {
+    if (!yearOf.has(r.year)) yearOf.set(r.year, { year: r.year, months: Array.from({ length: 13 }, () => [0, 0, 0, 0, 0]) });
+    const m = yearOf.get(r.year)!.months[r.month];
+    if (m && r.band >= 0 && r.band < 5) m[r.band] = r.n;
   }
   const cveYears = [...yearOf.values()];
   // The exploited CVEs listed most recently that we can check for: they circle the main map.
+  // Subdomains known for each program (see scripts/ingest.mjs subdomains), keyed by the name the program is shown under.
+  const surfaces = (d.prepare(`SELECT (SELECT r.program_name FROM reports r WHERE lower(r.program) = a.handle AND r.program_name IS NOT NULL LIMIT 1) AS program, a.total, a.branches
+    FROM program_assets a ORDER BY a.total DESC`).all() as { program: string | null; total: number; branches: string }[])
+    .flatMap((r) => { try { return r.program ? [{ program: r.program, total: r.total, branches: (JSON.parse(r.branches) as [string, string, number][]).slice(0, 12) }] : []; } catch { return []; } });
   const cveRing = d.prepare("SELECT id, name FROM cves WHERE kev = 1 AND template IS NOT NULL ORDER BY kev_added DESC, epss DESC LIMIT 26").all().map((r) => ({ ...r })) as { id: string; name: string }[];
   const graph: Graph = {
-    cveYears, cveRing, total: rows.length, withBody, programs: programs.size, weaknessCount: weak.size, totalBounty, classes: list, links, topPrograms };
-  cached = { at: Date.now(), graph };
+    cveYears, cveRing, surfaces, total: rows.length, withBody, programs: programs.size, weaknessCount: weak.size, totalBounty, classes: list, links, topPrograms };
+  cached = { at: Date.now(), version, graph };
+  dotsOf.clear();
   return graph;
 }
 
@@ -149,6 +168,14 @@ export function ftsQuery(q: string, inWriteups: boolean, any = false): string | 
 /** SQL that joins reports to their full-text matches, with a relevance rank (lower is better). */
 export const FTS_JOIN = "JOIN (SELECT rowid AS fid, bm25(reports_fts, 10.0, 4.0, 4.0, 2.0, 1.0) AS rank FROM reports_fts WHERE reports_fts MATCH ?) m ON m.fid = reports.id";
 
+/** One program's reports in one vulnerability class as map dots, in the same order as that strip's severities in the graph. */
+export function getProgramLeaves(program: string, cls: string): Leaf[] {
+  const rows = db().prepare(`SELECT id, title, severity, bounty, votes, ${WEAK} AS weakness FROM reports WHERE ${PROGRAM} = ? ORDER BY votes DESC, id DESC`)
+    .all(program) as { id: number; title: string; severity: string | null; bounty: number | null; votes: number; weakness: string | null }[];
+  return rows.filter((r) => classOf(r.weakness).id === cls)
+    .map((r) => [r.id, r.title.length > 96 ? r.title.slice(0, 94) + "…" : r.title, sevIndex(r.severity), r.bounty || 0, r.votes || 0, program]);
+}
+
 /** The reports of one weakness (or group of weaknesses) as map dots, in the same order as the graph's `sev` string. */
 export function getLeaves(names: string[]): Leaf[] {
   const real = names.filter((n) => n && n !== UNCLASSIFIED).slice(0, 200), parts: string[] = [];
@@ -162,7 +189,11 @@ export function getLeaves(names: string[]): Leaf[] {
 }
 
 /** Which dots on the map belong to one program: for each weakness, the positions of its reports in that weakness's `sev` order. */
+const dotsOf = new Map<string, Record<string, number[]>>(); // answers already worked out, emptied when the data changes
 export function getProgramDots(program: string): Record<string, number[]> {
+  if (!getGraph().topPrograms.some((p) => p.name === program)) return {}; // not a program we hold: nothing to scan for
+  const known = dotsOf.get(program);
+  if (known) return known;
   const rows = db().prepare(`SELECT ${WEAK} AS w, ${PROGRAM} AS p FROM reports ORDER BY votes DESC, id DESC`).all() as { w: string | null; p: string | null }[];
   const seen = new Map<string, number>(), out: Record<string, number[]> = {};
   for (const r of rows) {
@@ -170,6 +201,8 @@ export function getProgramDots(program: string): Record<string, number[]> {
     seen.set(w, i + 1);
     if (r.p === program) (out[w] ||= []).push(i);
   }
+  if (dotsOf.size >= 200) dotsOf.delete(dotsOf.keys().next().value!);
+  dotsOf.set(program, out);
   return out;
 }
 
@@ -205,7 +238,7 @@ export function searchTechniques(words: string[], scope: { topic?: string; class
   ).all(words.map((w) => `"${w.replace(/"/g, "")}"`).join(" OR "), ...args, limit).map((r) => ({ ...r })) as Technique[];
 }
 
-export type ListQuery = { q?: string; weakness?: string; cls?: string; program?: string; sort?: string; offset?: number; limit?: number };
+export type ListQuery = { q?: string; weakness?: string; cls?: string; program?: string; status?: string; sort?: string; offset?: number; limit?: number };
 
 export function listReports(o: ListQuery) {
   const where: string[] = [], args: (string | number)[] = [];
@@ -219,16 +252,19 @@ export function listReports(o: ListQuery) {
   if (match) args.push(match);
   if (o.weakness) weaknessIn(o.weakness.split("|"));
   if (o.program) { where.push(`${PROGRAM} = ?`); args.push(o.program); }
+  const substate = STATUSES.find((x) => x[0] === o.status)?.[2];
+  if (substate) { where.push("substate = ?"); args.push(substate); }
   if (o.cls) {
     const names = (db().prepare(`SELECT DISTINCT ${WEAK} w FROM reports`).all() as { w: string | null }[]).map((r) => r.w);
     weaknessIn(names.filter((n) => classOf(n).id === o.cls));
   }
   const order = o.sort === "bounty" ? "bounty DESC NULLS LAST, votes DESC" : o.sort === "new" ? "id DESC" : match && !o.sort ? "rank, votes DESC" : "votes DESC, id DESC";
   const w = where.length ? "WHERE " + where.join(" AND ") : "";
-  const limit = Math.min(Math.max(o.limit ?? 30, 1), 100), offset = Math.max(o.offset ?? 0, 0);
+  const whole = (v: number | undefined, dflt: number) => (Number.isFinite(v) ? Math.trunc(v!) : dflt); // never a fraction or infinity
+  const limit = Math.min(Math.max(whole(o.limit, 30), 1), 100), offset = Math.min(Math.max(whole(o.offset, 0), 0), 1e7);
   const total = (db().prepare(`SELECT COUNT(*) n FROM reports ${join} ${w}`).get(...args) as { n: number }).n;
   const rows = db().prepare(
-    `SELECT id,title,${PROGRAM} AS program,severity,${WEAK} AS weakness,bounty,votes,reporter,disclosed_at FROM reports ${join} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`
+    `SELECT id,title,${PROGRAM} AS program,severity,${WEAK} AS weakness,bounty,votes,reporter,disclosed_at,substate FROM reports ${join} ${w} ORDER BY ${order} LIMIT ? OFFSET ?`
   ).all(...args, limit, offset);
   return { total, rows };
 }

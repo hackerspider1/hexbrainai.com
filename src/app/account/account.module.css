@@ -66,3 +66,4 @@
   .create { flex-direction: column; }
   .keyRow { align-items: flex-start; flex-direction: column; gap: 10px; }
 }
+.sub { font-size: .75rem; font-weight: 400; color: var(--dim); font-variation-settings: "MONO" .5; letter-spacing: .05em; margin: 26px 0 4px; }

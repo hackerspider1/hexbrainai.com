@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "access": "node scripts/access.mjs",
     "lint": "eslint",
     "ingest:list": "node scripts/ingest.mjs list",
     "ingest:details": "node scripts/ingest.mjs details",
@@ -17,7 +18,9 @@
     "test:auth": "node tests/auth.mjs",
     "ingest:index": "node scripts/ingest.mjs index",
     "ingest:payloads": "node scripts/ingest.mjs payloads",
-    "ingest:cves": "node scripts/ingest.mjs cves"
+    "ingest:cves": "node scripts/ingest.mjs cves",
+    "ingest:subdomains": "node scripts/ingest.mjs subdomains",
+    "ingest:cvenow": "node scripts/ingest.mjs cvenow"
   },
   "dependencies": {
     "next": "16.4.6",

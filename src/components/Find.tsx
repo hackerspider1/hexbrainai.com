@@ -14,6 +14,7 @@ export default function Find({ model, onPick, onClose }: { model: Model; onPick:
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<{ q: string; total: number; rows: Row[] } | null>(null);
   const [at, setAt] = useState(0);
+  const [cves, setCves] = useState<{ q: string; rows: { id: string; title: string | null; cvss: number | null; product: string | null; kev: number }[] } | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const q = query.trim(), ready = q.length >= 2;
 
@@ -31,6 +32,7 @@ export default function Find({ model, onPick, onClose }: { model: Model; onPick:
     if (!ready) return;
     const t = setTimeout(() => {
       fetch(`/api/reports?q=${encodeURIComponent(q)}&limit=20`).then((r) => r.json()).then((j) => setFound({ q, ...j })).catch(() => {});
+      fetch(`/api/cve-find?q=${encodeURIComponent(q)}`).then((r) => r.json()).then((j) => setCves({ q, rows: Array.isArray(j) ? j : [] })).catch(() => {});
     }, 160);
     return () => clearTimeout(t);
   }, [q, ready]);
@@ -55,7 +57,7 @@ export default function Find({ model, onPick, onClose }: { model: Model; onPick:
       <div className={s.box}>
         <div className={s.bar}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></svg>
-          <input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setAt(0); }} onKeyDown={onKey} placeholder="Search reports, weaknesses and programs" aria-label="Search reports, weaknesses and programs" />
+          <input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setAt(0); }} onKeyDown={onKey} placeholder="Search reports, weaknesses, programs and CVEs" aria-label="Search reports, weaknesses, programs and CVEs" />
           <button className={s.esc} onClick={onClose}>Esc</button>
         </div>
         <div className={s.list} ref={list}>
@@ -77,9 +79,15 @@ export default function Find({ model, onPick, onClose }: { model: Model; onPick:
               <span>{r.title}</span><small>{meta(r)}</small>
             </a>
           ); })}
-          {ready && found?.q === q && !count && <p className={s.none}>Nothing matches “{q}”. Try fewer words, a program name, or a weakness such as SSRF.</p>}
+          {ready && cves?.q === q && cves.rows.length > 0 && <h3>CVEs</h3>}
+          {ready && cves?.q === q && cves.rows.map((c) => (
+            <a key={c.id} className={s.item} href={`/cve/${c.id}`} target="_blank" rel="noreferrer">
+              <span>{c.title || c.id}</span><small>{[c.title ? c.id : null, c.kev ? "exploited in the wild" : null, c.cvss != null ? `CVSS ${c.cvss}` : null, c.product].filter(Boolean).join("  ·  ")}</small>
+            </a>
+          ))}
+          {ready && found?.q === q && !count && !(cves?.q === q && cves.rows.length) && <p className={s.none}>Nothing matches “{q}”. Try fewer words, a program name, or a weakness such as SSRF.</p>}
         </div>
-        <div className={s.foot}><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>Enter</kbd> open</span><span>Reports open in a new tab</span></div>
+        <div className={s.foot}><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>Enter</kbd> open</span><span>Reports and CVEs open in a new tab</span></div>
       </div>
     </div>
   );

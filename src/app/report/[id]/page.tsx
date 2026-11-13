@@ -7,7 +7,7 @@ import { Sev } from "@/components/Bars";
 import Sheet from "@/components/Sheet";
 import { classPath, jsonLd, programPath } from "@/lib/browse";
 import { SITE } from "@/lib/site";
-import { classOf } from "@/lib/taxonomy";
+import { classOf, statusLabel } from "@/lib/taxonomy";
 import s from "./report.module.css";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +61,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </p>
           <h1>{r.title}</h1>
           <div className={s.read}>
+            {statusLabel(r.substate) && <div><b>{statusLabel(r.substate)}</b><span>status</span></div>}
             {r.severity && r.severity !== "none" && <div><b><Sev level={r.severity} /> {r.severity}</b><span>severity</span></div>}
             {r.bounty ? <div><b>{money(r.bounty)}</b><span>bounty</span></div> : null}
             {r.votes ? <div><b>{r.votes.toLocaleString("en-US")}</b><span>upvotes</span></div> : null}

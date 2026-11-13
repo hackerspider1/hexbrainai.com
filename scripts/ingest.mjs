@@ -7,6 +7,8 @@
 //   node scripts/ingest.mjs index                 build the bypass library from the stored write-ups
 //   node scripts/ingest.mjs payloads              import the PayloadsAllTheThings reference collection
 //   node scripts/ingest.mjs cves                  import CVE checks, the exploited-in-the-wild list and likelihood scores
+//   node scripts/ingest.mjs cvenow [--full]     a headline, score, product and fix for every CVE, from cve.now
+//   node scripts/ingest.mjs subdomains            subdomains per program from the Chaos public dataset
 //   node scripts/ingest.mjs logos [--max 60]     logo for the programs with the most reports
 //   node scripts/ingest.mjs seed <file>          add reports by id (one id per line), no token needed
 //   node scripts/ingest.mjs status
@@ -15,10 +17,10 @@
 // (create one at https://hackerone.com/settings/api_token/edit).
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
-import { readFileSync, mkdirSync, existsSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, mkdirSync, existsSync, writeFileSync, readdirSync, statSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { parse as parseYaml } from "yaml";
 import { passages, referencedReports, tagReport } from "../src/lib/defences.mjs";
 
@@ -30,9 +32,11 @@ for (const f of [".env.local", ".env"]) {
 const dbPath = process.env.HEXBRAIN_DB || join(root, "data", "hexbrain.db");
 mkdirSync(dirname(dbPath), { recursive: true });
 const db = new DatabaseSync(dbPath);
-db.exec("PRAGMA journal_mode = WAL;");
+db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 15000;");
 db.exec(readFileSync(join(root, "db", "schema.sql"), "utf8"));
 if (!db.prepare("PRAGMA table_info(reports)").all().some((c) => c.name === "weakness_guess")) db.exec("ALTER TABLE reports ADD COLUMN weakness_guess TEXT");
+if (!db.prepare("PRAGMA table_info(cve_map)").all().some((c) => c.name === "month")) db.exec("ALTER TABLE cve_map ADD COLUMN month INTEGER NOT NULL DEFAULT 0");
+db.exec("CREATE INDEX IF NOT EXISTS cve_map_month ON cve_map(year, month, band, pos)");
 
 const UA = "hexbrain-ingest/0.1";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -133,6 +137,7 @@ async function details() {
       break;
     }
     const now = new Date().toISOString();
+    if (d.status !== 200 && d.status !== 404 && d.status !== 410) { await sleep(gap); continue; } // a passing error: try again on the next run
     if (d.status !== 200) { upd.run(null, null, null, null, now, d.status, null, null, null, null, null, null, null, null, id); await sleep(gap); continue; }
     const j = d.j, sc = j.structured_scope || {};
     upd.run(j.vulnerability_information || null, summaryOf(j), sc.asset_type ?? null, sc.asset_identifier ?? null, now, 200,
@@ -395,9 +400,141 @@ async function importCves(src) {
   db.exec("DROP TABLE IF EXISTS cve_all; DELETE FROM cve_map;");
   for (const [key, list] of groups) { const [year, band] = key.split("|").map(Number); list.sort((x, y) => (y[1] || 0) - (x[1] || 0) || (x[0] < y[0] ? -1 : 1)).forEach(([id, e], pos) => put.run(id, year, band, pos, e)); }
   db.exec("COMMIT; INSERT INTO cves_fts(cves_fts) VALUES ('rebuild');");
+  placeCves();
   console.log(`${every.size} registered CVE ids placed on the map.`);
   setMeta("cves_at", new Date().toISOString());
   console.log(`Done. ${n} CVEs with a check (${bad} templates could not be read), ${kev.length} known to be exploited (${kevNew} of them without a check), ${scored} scored for likelihood.`);
+}
+
+// ---- Subdomains per program, from ProjectDiscovery's Chaos public dataset --------------------------------------
+const CHAOS = "https://chaos-data.projectdiscovery.io";
+const HOST = /^(?=.{4,253}$)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z]{2,24}$/;
+async function importSubdomains() {
+  const dir = join(root, "data", "subdomains"), tmp = join(root, "data", "sources", "chaos");
+  mkdirSync(dir, { recursive: true }); mkdirSync(tmp, { recursive: true });
+  const index = await (await fetch(`${CHAOS}/index.json`, { headers: { "User-Agent": UA } })).json();
+  const ours = new Set(db.prepare("SELECT DISTINCT lower(program) h FROM reports WHERE program IS NOT NULL").all().map((r) => r.h));
+  const known = new Map(db.prepare("SELECT handle, source_updated FROM program_assets").all().map((r) => [r.handle, r.source_updated]));
+  const save = db.prepare(`INSERT INTO program_assets (handle, total, roots, branches, source, source_updated, updated_at) VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(handle) DO UPDATE SET total=excluded.total, roots=excluded.roots, branches=excluded.branches, source=excluded.source, source_updated=excluded.source_updated, updated_at=excluded.updated_at`);
+  const max = Number(arg("max", 1000));
+  let done = 0, skipped = 0, names = 0;
+  for (const e of index) {
+    const handle = /hackerone\.com\/([\w-]+)/i.exec(e.program_url || "")?.[1]?.toLowerCase();
+    if (!handle || !ours.has(handle) || !e.count || !/^https:\/\/chaos-data\.projectdiscovery\.io\/[\w.-]+\.zip$/.test(e.URL || "")) continue;
+    const day = String(e.last_updated || "").slice(0, 10);
+    if (known.get(handle) === day && existsSync(join(dir, handle + ".txt.gz"))) { skipped++; continue; } // unchanged since the last run
+    if (done >= max) break;
+    try {
+      const res = await fetch(e.URL, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(120000) });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const zip = join(tmp, handle + ".zip");
+      writeFileSync(zip, Buffer.from(await res.arrayBuffer()));
+      // One text file per root domain. Names are read as data only and anything that is not a plain host name is dropped.
+      const files = execFileSync("unzip", ["-Z1", zip], { encoding: "utf8" }).split("\n").filter((f) => /^\w[\w.-]*\.txt$/.test(f));
+      const all = new Set(), roots = [];
+      for (const f of files) {
+        const rootName = f.slice(0, -4).toLowerCase();
+        const lines = execFileSync("unzip", ["-p", zip, f], { encoding: "utf8", maxBuffer: 1 << 30 }).split("\n");
+        let k = 0;
+        for (const l of lines) { const h = l.trim().toLowerCase().replace(/^\*\./, ""); if (HOST.test(h) && !all.has(h)) { all.add(h); k++; } }
+        if (k && HOST.test(rootName)) roots.push([rootName, k]);
+      }
+      rmSync(zip, { force: true });
+      if (!all.size) continue;
+      // Sorted by domain from the right (com, example, api) so related hosts sit together.
+      const key = (h) => h.split(".").reverse().join(".");
+      const sorted = [...all].sort((a, b) => (key(a) < key(b) ? -1 : 1));
+      writeFileSync(join(dir, handle + ".txt.gz"), gzipSync(sorted.join("\n") + "\n"));
+      roots.sort((a, b) => b[1] - a[1]);
+      // For drawing: one branch per root domain, except that a root holding most of the names is opened up into the labels just under it.
+      const [top, topN] = roots[0], dominant = roots.length === 1 || topN / sorted.length > 0.75;
+      let branches = roots.slice(dominant ? 1 : 0).map(([name, k]) => [name, name, k]);
+      if (dominant) {
+        const counts = new Map();
+        for (const h of sorted) {
+          if (h === top || !h.endsWith("." + top)) continue;
+          const label = h.slice(0, -(top.length + 1)).split(".").pop();
+          counts.set(label, (counts.get(label) || 0) + 1);
+        }
+        branches = branches.concat([...counts.entries()].map(([label, k]) => [label, `${label}.${top}`, k]));
+      }
+      branches = branches.sort((a, b) => b[2] - a[2]).slice(0, 28);
+      save.run(handle, sorted.length, JSON.stringify(roots), JSON.stringify(branches), "chaos", day, new Date().toISOString());
+      done++; names += sorted.length;
+      if (done % 10 === 0) console.log(`  ${done} programs, ${names.toLocaleString("en-US")} subdomains`);
+    } catch (err) { console.log(`  ${handle}: ${err.message}`); }
+    await sleep(400); // one download at a time, with a pause
+  }
+  console.log(`Subdomains: ${done} programs updated (${names.toLocaleString("en-US")} names), ${skipped} already current.`);
+}
+
+// Puts every CVE on the map in the year and month it was published, where cve.now gave us a date; a CVE with no date
+// stays in the year of its id with no month. Within a month and band, the most likely to be exploited come first.
+function placeCves() {
+  const now = new Date().getFullYear();
+  db.exec("BEGIN");
+  try {
+    db.exec(`UPDATE cve_map SET year = CAST(substr(id, 5, 4) AS INTEGER), month = 0`);
+    db.exec(`UPDATE cve_map SET
+        month = (SELECT CAST(substr(i.published, 6, 2) AS INTEGER) FROM cve_info i WHERE i.id = cve_map.id),
+        year = (SELECT CASE WHEN CAST(substr(i.published, 1, 4) AS INTEGER) BETWEEN 1999 AND ${now} THEN CAST(substr(i.published, 1, 4) AS INTEGER) ELSE CAST(substr(cve_map.id, 5, 4) AS INTEGER) END FROM cve_info i WHERE i.id = cve_map.id)
+      WHERE id IN (SELECT id FROM cve_info WHERE published GLOB '[12][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]*' AND CAST(substr(published, 6, 2) AS INTEGER) BETWEEN 1 AND 12)`);
+    db.exec(`DROP TABLE IF EXISTS temp.cve_rank;
+      CREATE TEMP TABLE cve_rank AS SELECT id, ROW_NUMBER() OVER (PARTITION BY year, month, band ORDER BY epss DESC, id) - 1 AS rn FROM cve_map;
+      CREATE INDEX temp.cve_rank_id ON cve_rank(id);
+      UPDATE cve_map SET pos = (SELECT rn FROM temp.cve_rank r WHERE r.id = cve_map.id);
+      DROP TABLE temp.cve_rank;`);
+    db.exec("COMMIT");
+  } catch (err) { db.exec("ROLLBACK"); throw err; }
+  db.exec("INSERT INTO cve_info_fts(cve_info_fts) VALUES ('rebuild')");
+  const dated = db.prepare("SELECT SUM(month > 0) d, COUNT(*) n FROM cve_map").get();
+  console.log(`CVEs placed by month: ${Number(dated.d || 0).toLocaleString("en-US")} of ${dated.n.toLocaleString("en-US")} have a publication date.`);
+}
+
+// ---- A headline and the basic facts for every CVE, from cve.now ----------------------------------------------
+// The list comes newest first, 200 a page. A first run walks all of it (about 2,000 pages, one a second, and it can be
+// stopped and resumed); later runs stop at the first page that holds nothing new.
+async function importCveNow() {
+  const full = process.argv.includes("--full") || !db.prepare("SELECT 1 FROM meta WHERE k = 'cvenow_done'").get();
+  const save = db.prepare(`INSERT INTO cve_info (id, title, cvss, product, fixed, kev, published, modified) VALUES (?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET title=excluded.title, cvss=excluded.cvss, product=excluded.product, fixed=excluded.fixed, kev=excluded.kev, published=excluded.published, modified=excluded.modified
+    WHERE excluded.modified IS NOT cve_info.modified`);
+  const max = Number(arg("max", 100000));
+  let cursor = full ? db.prepare("SELECT v FROM meta WHERE k = 'cvenow_cursor'").get()?.v || "" : "", pages = 0, changed = 0, seen = 0, fails = 0;
+  while (pages < max) {
+    let j;
+    try {
+      const res = await fetch(`https://cve.now/api/v1/cves?limit=200${cursor ? "&cursor=" + encodeURIComponent(cursor) : ""}`, { headers: { "User-Agent": "cve-import/0.1", Accept: "application/json" }, signal: AbortSignal.timeout(30000) });
+      if (res.status === 429 || res.status >= 500) throw new Error("HTTP " + res.status);
+      if (!res.ok) { console.log(`  stopped: HTTP ${res.status}`); break; }
+      j = await res.json(); fails = 0;
+    } catch (err) {
+      if (++fails > 6) { console.log(`  giving up for now (${err.message}); run again to resume`); break; }
+      await sleep(5000 * fails); continue; // back off and try the same page again
+    }
+    const items = Array.isArray(j.items) ? j.items : [];
+    let fresh = 0;
+    db.exec("BEGIN");
+    try {
+      for (const it of items) {
+        const id = String(it.id || "").toUpperCase();
+        if (!/^CVE-\d{4}-\d{3,}$/.test(id)) continue; // only CVE ids; everything is stored as text and shown as text
+        const fixed = Array.isArray(it.fix) ? it.fix.filter((v) => typeof v === "string").slice(0, 8).join(", ").slice(0, 200) : null;
+        fresh += save.run(id, short(it.title, 220) || null, typeof it.cvss === "number" ? it.cvss : null, short(it.product, 200) || null, fixed || null, it.kev ? 1 : 0, it.publishedAt || null, it.modifiedAt || null).changes;
+      }
+      db.exec("COMMIT");
+    } catch (err) { db.exec("ROLLBACK"); throw err; }
+    pages++; seen += items.length; changed += fresh;
+    cursor = j.next_cursor || "";
+    if (full) setMeta("cvenow_cursor", cursor);
+    if (pages % 50 === 0) console.log(`  ${pages} pages, ${seen.toLocaleString("en-US")} CVEs read, ${changed.toLocaleString("en-US")} new or changed`);
+    if (!cursor) { setMeta("cvenow_done", new Date().toISOString()); setMeta("cvenow_cursor", ""); break; }
+    if (!full && !fresh) break; // caught up
+    await sleep(1000);
+  }
+  placeCves();
+  console.log(`cve.now: ${pages} pages, ${changed.toLocaleString("en-US")} new or changed; ${db.prepare("SELECT COUNT(*) n FROM cve_info").get().n.toLocaleString("en-US")} CVEs have a headline.`);
 }
 
 function status() {
@@ -414,5 +551,8 @@ else if (cmd === "logos") await logos();
 else if (cmd === "index") buildIndex();
 else if (cmd === "payloads") importPayloads(process.argv[3]);
 else if (cmd === "cves") await importCves(process.argv[3]);
+else if (cmd === "subdomains") await importSubdomains();
+else if (cmd === "cvenow") await importCveNow();
+else if (cmd === "cveplace") placeCves();
 else if (cmd === "status") status();
 else console.log("Usage: node scripts/ingest.mjs <import|list|details|logos|index|payloads|cves|seed <file>|status> [--max N]");
