@@ -79,7 +79,12 @@ button.stat:hover b, button.stat:hover span { color: var(--hot); }
   .brand { font-size: 1.05rem; grid-column: 1; grid-row: 1; }
   .crumbs { grid-column: 1 / -1; grid-row: 2; margin-top: 8px; }
   .hero, .empty { left: 16px; right: 16px; bottom: 24px; }
-  .hero p, .hero h1 { font-size: 1rem; }
+  .empty p, .empty h1 { font-size: 1rem; }
+  /* On a phone the map gets the whole page: the intro is kept for screen readers and search engines only, and one row of links stays. */
+  .hero { bottom: 18px; max-width: none; }
+  .hero h1, .hero p:not(.links) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .hero .links { justify-content: center; gap: 4px 18px; font-size: .8125rem; }
+  .hero::before { display: none; }
   .stats { display: none; }
   .panel { top: auto; left: 0; width: auto; height: 52vh; padding: 14px 16px 24px; border-left: 0; border-top: 1px solid var(--line); transform: translateY(100%); }
 }

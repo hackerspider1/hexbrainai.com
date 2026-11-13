@@ -1,5 +1,7 @@
 # HexBrain
 
+https://hexbrainai.com
+
 Every disclosed bug, mapped to how it was found: an interactive map of publicly disclosed HackerOne reports, grouped by vulnerability class, weakness and program, with each write-up in full. It also serves the same data to AI assistants.
 
 ## Run it
@@ -50,8 +52,10 @@ Two doors onto the same ten read-only tools:
 **MCP** (Claude, ChatGPT and other MCP clients): Streamable HTTP at `/api/mcp`.
 
 ```bash
-claude mcp add --transport http hexbrain http://localhost:3210/api/mcp
+claude mcp add --transport http hexbrain https://hexbrainai.com/api/mcp --header "Authorization: Bearer <your key>"
 ```
+
+Keys are created on `/account`. Against a copy running on your own machine, use `http://localhost:3210/api/mcp`; no key is needed there until sign-in is set up.
 
 **REST** (GPT Actions and anything that calls HTTP): `GET` or `POST /api/v1/<tool without the hexbrain_ prefix>`, described by `/api/v1/openapi.json`.
 
@@ -64,14 +68,14 @@ The app needs a server with a disk, because the data is a file. A small VPS or a
 ```bash
 docker build -t hexbrain .
 docker run -d -p 3000:3000 -v hexbrain-data:/app/data \
-  -e HEXBRAIN_PUBLIC_URL=https://your.domain hexbrain
+  -e GOOGLE_CLIENT_ID=... -e GOOGLE_CLIENT_SECRET=... hexbrain
 ```
 
 Put HTTPS in front of it (Caddy, nginx or your host's proxy), and make sure the proxy passes the visitor's address in `X-Forwarded-For`, which the request limits use.
 
 | Variable | Purpose |
 | --- | --- |
-| `HEXBRAIN_PUBLIC_URL` | Public address, used in search previews, the sitemap and the AI connection details. Set it before building. |
+| `HEXBRAIN_PUBLIC_URL` | Public address, used in search previews, the sitemap and the AI connection details. Defaults to `https://hexbrainai.com` in production; set it before building to use another. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Turn on Google sign-in. Once set, the AI endpoints need a key that people create on `/account`. |
 | `HEXBRAIN_OPEN_API` | Set to `true` to leave the AI endpoints open even with sign-in on |
 | `HEXBRAIN_API_KEY` | An owner key that always works on the AI endpoints |

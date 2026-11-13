@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   poweredByHeader: false,
   distDir: process.env.NEXT_DIST_DIR || ".next", // lets a check build run beside a running dev server
+  // One address for the site: the www form sends visitors (and search engines) to the bare domain.
+  async redirects() {
+    return [{ source: "/:path*", has: [{ type: "host", value: "www.hexbrainai.com" }], destination: "https://hexbrainai.com/:path*", permanent: true }];
+  },
   async headers() {
     return [{
       source: "/:path*",
