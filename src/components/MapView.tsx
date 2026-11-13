@@ -7,7 +7,7 @@ import type { Graph, Leaf } from "@/lib/db";
 import { SEVERITIES, STATUSES, statusLabel } from "@/lib/taxonomy";
 import { money, num, plural } from "./map/format";
 import { CVE_DOTS, NONE, SURFACE_DOTS, build, ensureDisc, placeCore } from "./map/layout";
-import type { Focus, Lens, Node, WNode } from "./map/layout";
+import type { Focus, Lens, Model, Node, WNode } from "./map/layout";
 import { namesPerPage, startMap } from "./map/renderer";
 import { SITE } from "@/lib/site";
 import Find from "./Find";
@@ -30,11 +30,20 @@ function syncUrl(f: Focus, lens: Lens) {
   window.history.replaceState(null, "", q.size ? `?${q}` : window.location.pathname);
 }
 
+// Laying out every dial takes real work, and on the server the page is rendered for every visitor with the same data.
+// There the layout is kept until the data changes (the page only reads counts and names from it); a browser builds its own.
+let served: { stamp: number; model: Model } | null = null;
+function layoutOf(graph: Graph): Model {
+  if (typeof window !== "undefined") return build(graph);
+  if (served?.stamp !== graph.stamp) served = { stamp: graph.stamp, model: build(graph) };
+  return served.model;
+}
+
 export type Viewer = { name: string | null; picture: string | null } | null;
 
 // `viewer` is the signed-in person, if any. Connecting an AI is offered only to them.
 export default function MapView({ graph, viewer = null, needsKey = false }: { graph: Graph; viewer?: Viewer; needsKey?: boolean }) {
-  const model = useMemo(() => build(graph), [graph]);
+  const model = useMemo(() => layoutOf(graph), [graph]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [focus, setFocusState] = useState<Focus>(NONE);

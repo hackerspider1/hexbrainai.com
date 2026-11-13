@@ -50,6 +50,7 @@ export type GraphProgram = {
 /** One year of CVEs: for each month (index 0 is "no date", 1 to 12 the months), how many fall in each of the five bands. */
 export type GraphYear = { year: number; months: number[][] };
 export type Graph = {
+  stamp: number; // when this graph was built: the same number means the same data
   cveYears: GraphYear[]; cveRing: { id: string; name: string }[];
   surfaces: { program: string; total: number; branches: [name: string, domain: string, count: number][] }[]; // subdomains per program, already divided for drawing
   total: number; withBody: number; programs: number; weaknessCount: number; totalBounty: number;
@@ -147,7 +148,7 @@ export function getGraph(): Graph {
     .flatMap((r) => { try { return r.program ? [{ program: r.program, total: r.total, branches: (JSON.parse(r.branches) as [string, string, number][]).slice(0, 12) }] : []; } catch { return []; } });
   const cveRing = d.prepare("SELECT id, name FROM cves WHERE kev = 1 AND template IS NOT NULL ORDER BY kev_added DESC, epss DESC LIMIT 26").all().map((r) => ({ ...r })) as { id: string; name: string }[];
   const graph: Graph = {
-    cveYears, cveRing, surfaces, total: rows.length, withBody, programs: programs.size, weaknessCount: weak.size, totalBounty, classes: list, links, topPrograms };
+    stamp: Date.now(), cveYears, cveRing, surfaces, total: rows.length, withBody, programs: programs.size, weaknessCount: weak.size, totalBounty, classes: list, links, topPrograms };
   cached = { at: Date.now(), version, graph };
   dotsOf.clear();
   return graph;
