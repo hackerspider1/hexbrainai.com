@@ -1,6 +1,7 @@
 // Step two of signing in: Google sends the visitor back with a code, which is exchanged for their identity.
 import { NextResponse, type NextRequest } from "next/server";
 import { OAUTH_COOKIE, SESSION_COOKIE, cookieOptions, createSession, signInLive, upsertGoogleUser } from "@/lib/auth";
+import { tooMany } from "@/lib/rate";
 import { SITE } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const fail = (why: string) => { const r = NextResponse.redirect(`${SITE.url}/account?error=${why}`); r.cookies.delete(OAUTH_COOKIE); return r; };
   if (!signInLive()) return NextResponse.redirect(`${SITE.url}/account`);
+  const busy = tooMany(req, "sign-in", 20);
+  if (busy) return busy;
   const q = req.nextUrl.searchParams, [state, nonce] = (req.cookies.get(OAUTH_COOKIE)?.value || "").split(".");
   if (q.get("error")) return fail("cancelled");
   if (!state || !nonce || q.get("state") !== state || !q.get("code")) return fail("state");

@@ -72,6 +72,23 @@ try {
   check("API (MCP): works with the new key", r.status === 200 && (await r.json()).result?.tools?.length === 10);
   await go("/account");
   check("account page: counts the key's requests", /2 requests/.test(await ev("document.querySelector('main').innerText")));
+  // Limits that stop the API being abused
+  const mcp = (body, k = key) => fetch(BASE + "/api/mcp", { method: "POST", headers: { "Content-Type": "application/json", authorization: "Bearer " + k }, body: typeof body === "string" ? body : JSON.stringify(body) });
+  const ping = (n) => Array.from({ length: n }, (_, i) => ({ jsonrpc: "2.0", id: i + 1, method: "ping" }));
+  check("limits: an oversized batch is refused", (await mcp(ping(11))).status === 400);
+  r = await mcp(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: { pad: "x".repeat(70000) } }));
+  check("limits: an oversized request body is refused", r.status === 413, r.status);
+  r = await fetch(BASE + "/api/v1/search_reports", { method: "POST", headers: { "Content-Type": "application/json", authorization: "Bearer " + key }, body: JSON.stringify({ query: "x".repeat(70000) }) });
+  check("limits: the same on the REST door", r.status === 413, r.status);
+  let last = 200; for (let i = 0; i < 8 && last === 200; i++) last = (await mcp(ping(10))).status;
+  r = await mcp(ping(10));
+  check("limits: a batch counts as one request per message", last === 200 && r.status === 429 && Number(r.headers.get("retry-after")) > 0, last + " " + r.status);
+  const second = "sk_" + randomBytes(24).toString("base64url");
+  db.prepare("INSERT INTO api_keys (user_id, name, prefix, hash, created_at) VALUES (?,?,?,?,?)").run(userId, "second", second.slice(0, 7), createHash("sha256").update(second).digest("hex"), new Date().toISOString());
+  check("limits: a second key on the same account shares the limit", (await get("/api/v1/list_classes", { authorization: "Bearer " + second })).status === 429);
+  db.prepare("DELETE FROM api_keys WHERE hash = ?").run(createHash("sha256").update(second).digest("hex"));
+  r = await get("/about", { "x-forwarded-for": "203.0.113.9, 127.0.0.1" });
+  check("limits: pages still load for an ordinary visitor", r.status === 200);
   await go("/");
   check("home: header shows the account, not Sign in", await ev("!!document.querySelector('header a[aria-label=\"Your account\"]')"));
   await ev("document.querySelector('header button[class*=primary]').click()"); await sleep(500);

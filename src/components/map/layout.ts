@@ -23,10 +23,10 @@ const CLASS_GAP = 5, WEAK_GAP = 0.5; // empty space between classes and between 
 export type Geo = { R1: number; R0: number; DOT0: number; PITCH: number };
 export const GEO_V: Geo = { R1, R0, DOT0, PITCH };
 // The CVE dial holds far more dots, so it is larger and its dots sit closer together.
-export const GEO_C: Geo = { R1: 520, R0: 760, DOT0: 772, PITCH: 1.6 };
-export const BANDS = ["Exploited in the wild", "Ready check, not yet exploited", "Likely to be exploited (10% or more)", "Possible (1 to 10%)", "Unlikely (under 1%)"];
+const GEO_C: Geo = { R1: 520, R0: 760, DOT0: 772, PITCH: 1.6 };
+const BANDS = ["Exploited in the wild", "Ready check, not yet exploited", "Likely to be exploited (10% or more)", "Possible (1 to 10%)", "Unlikely (under 1%)"];
 /** A strip with more dots than this stays a strip when opened: a disc of that many dots would not fit or draw smoothly. */
-export const FLAT_OVER = 3000;
+const FLAT_OVER = 3000;
 export type Lens = "classes" | "programs" | "cves";
 export type CNode = {
   k: "cls"; id: string; name: string; count: number; bounty: number; tag: string;

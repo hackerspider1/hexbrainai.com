@@ -1,11 +1,5 @@
 .page { max-width: 66rem; margin: 0 auto; padding: 0 36px 96px; }
 .page button, .page a { font: inherit; }
-.top { display: flex; justify-content: space-between; align-items: center; padding: 22px 0; border-bottom: 1px solid var(--line); }
-.brand { display: inline-flex; align-items: center; gap: 10px; font-size: 1.125rem; letter-spacing: .3em; text-transform: uppercase; text-decoration: none; }
-.brand:hover { color: var(--hot); }
-.top nav { display: flex; align-items: center; gap: 8px; font-size: .8125rem; }
-.top nav a, .top nav button { background: var(--raise); border-radius: 7px; padding: 8px 12px; text-decoration: none; }
-.top nav a:hover, .top nav button:hover { background: var(--line); }
 .tag { margin: 0 0 14px; font-size: .75rem; color: var(--hot); font-variation-settings: "MONO" .5; }
 .dim { color: var(--dim); margin: 0 0 14px; font-size: .9375rem; max-width: 64ch; }
 .error { color: var(--hot); margin: 0 0 16px; }

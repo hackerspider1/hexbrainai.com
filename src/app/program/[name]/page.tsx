@@ -1,7 +1,8 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import Mark from "@/components/Mark";
+import Bars from "@/components/Bars";
+import Sheet from "@/components/Sheet";
 import ReportList from "@/components/ReportList";
 import { classPath, jsonLd, n, programPath, usd } from "@/lib/browse";
 import { getGraph, listReports } from "@/lib/db";
@@ -30,24 +31,21 @@ export default async function ProgramPage({ params }: Props) {
     { "@type": "ListItem", position: 1, name: SITE.name, item: SITE.url }, { "@type": "ListItem", position: 2, name: "Browse", item: `${SITE.url}/browse` },
     { "@type": "ListItem", position: 3, name: p.name, item: SITE.url + programPath(p.name) }] };
   return (
-    <main className={`${s.page} ${s.wide}`}>
+    <Sheet here="browse" className={`${s.page} ${s.wide}`}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(crumbs) }} />
-      <Link href="/" className={s.brand}><Mark />{SITE.name}</Link>
       <p className={s.crumbs}><Link href="/browse">Browse</Link> / {p.name}</p>
-      <h1>{p.logo && <img src={p.logo} alt="" width={44} height={44} style={{ borderRadius: "50%", verticalAlign: "middle", marginRight: 14, background: "#efe6d0" }} />}{p.name}</h1>
+      <h1>{p.logo && <img src={p.logo} alt="" width={48} height={48} />}{p.name}</h1>
       <div className={s.facts}>
         <div><b>{n(p.count)}</b><span>disclosed reports</span></div>
         {p.bounty > 0 && <div><b>{usd(p.bounty)}</b><span>paid in bounties</span></div>}
       </div>
-      <p><Link href={`/?program=${encodeURIComponent(p.name)}`}>See {p.name}&apos;s reports on the map</Link></p>
+      <p className={s.acts}><Link href={`/?program=${encodeURIComponent(p.name)}`}>See its reports on the map</Link></p>
 
       <h2>What gets reported to {p.name}</h2>
-      <ul className={s.cols}>
-        {p.classes.map(([id, k]) => { const c = g.classes.find((x) => x.id === id); return c ? <li key={id}><Link href={classPath(id)}>{c.name}</Link> <small>{n(k)}</small></li> : null; })}
-      </ul>
+      <Bars rows={p.classes.flatMap(([id, k]) => { const c = g.classes.find((x) => x.id === id); return c ? [{ name: c.name, count: k, href: classPath(id) }] : []; })} />
 
       <h2>Most upvoted reports</h2>
       <ReportList rows={top} showProgram={false} />
-    </main>
+    </Sheet>
   );
 }

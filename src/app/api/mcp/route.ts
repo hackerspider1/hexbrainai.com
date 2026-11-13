@@ -1,9 +1,8 @@
 // Model Context Protocol endpoint (Streamable HTTP, stateless, JSON responses).
 // Add it to an MCP client as an HTTP server at <site>/api/mcp.
 import { INSTRUCTIONS, TOOLS, ToolError } from "@/lib/ai";
-import { NO_KEY, identify } from "@/lib/auth";
+import { LIMITS, admit, readJson } from "@/lib/guard";
 import { SITE } from "@/lib/site";
-import { tooMany } from "@/lib/rate";
 
 export const dynamic = "force-dynamic";
 
@@ -61,12 +60,13 @@ export async function POST(req: Request) {
   if (origin) { try { sameSite = new URL(origin).host === (req.headers.get("host") || new URL(req.url).host); } catch { sameSite = false; } }
   if (origin && !sameSite && !(process.env.HEXBRAIN_ALLOWED_ORIGINS || "").split(",").includes(origin))
     return Response.json(fail(null, -32000, "Origin not allowed."), { status: 403 });
-  const who = identify(req);
-  if (!who) return tooMany(req, "ai-refused", 30) ?? Response.json(fail(null, -32001, NO_KEY), { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
-  const busy = tooMany(req, "ai", 90, who.id);
-  if (busy) return busy;
-  let body: unknown;
-  try { body = await req.json(); } catch { return Response.json(fail(null, -32700, "Body is not valid JSON."), { status: 400 }); }
+  const read = await readJson(req);
+  // A batch counts as one request per message in it, so batching is not a way round the limit.
+  const body = read instanceof Response ? null : read.body, size = Array.isArray(body) ? body.length : 1;
+  if (size > LIMITS.batch) return Response.json(fail(null, -32600, `A batch may hold at most ${LIMITS.batch} messages.`), { status: 400 });
+  const refused = admit(req, Math.max(1, size));
+  if (refused) return refused;
+  if (read instanceof Response) return read;
   if (Array.isArray(body)) {
     const out = (await Promise.all(body.map((m) => handle(m as Rpc)))).filter(Boolean);
     return out.length ? Response.json(out) : new Response(null, { status: 202 });

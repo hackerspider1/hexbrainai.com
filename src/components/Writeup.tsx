@@ -17,7 +17,7 @@ export default function Writeup({ children }: { children: string }) {
         a: ({ href, children: kids }) => <a href={href} target="_blank" rel="noopener noreferrer nofollow">{kids}</a>,
       }}
     >
-      {children}
+      {children.replace(/^(#{2,6})(?=[A-Za-z])/gm, "$1 ") /* "##Heading" is a heading the author typed without the space */}
     </Markdown>
   );
 }

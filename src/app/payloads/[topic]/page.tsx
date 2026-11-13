@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import Mark from "@/components/Mark";
+import Sheet from "@/components/Sheet";
 import Writeup from "@/components/Writeup";
 import { classPath } from "@/lib/browse";
 import { getGraph, techniquesOf } from "@/lib/db";
-import { SITE } from "@/lib/site";
 import s from "../../plain.module.css";
 import r from "../../report/[id]/report.module.css";
 
@@ -26,8 +25,7 @@ export default async function PayloadTopic({ params }: Props) {
   if (!rows.length) notFound();
   const cls = rows[0].class_id ? getGraph().classes.find((c) => c.id === rows[0].class_id) : null;
   return (
-    <main className={`${s.page} ${s.wide}`}>
-      <Link href="/" className={s.brand}><Mark />{SITE.name}</Link>
+    <Sheet here="payloads" className={`${s.page} ${s.wide}`}>
       <p className={s.crumbs}><Link href="/browse">Browse</Link> / <Link href="/payloads">Payloads</Link> / {topic}</p>
       <h1>{topic}</h1>
       <p className={s.lede}>{rows.length} passages of payloads and techniques.{cls ? <> See also the <Link href={classPath(cls.id)}>{cls.count.toLocaleString("en-US")} disclosed {cls.name} reports</Link>.</> : null}</p>
@@ -39,6 +37,6 @@ export default async function PayloadTopic({ params }: Props) {
         </details>
       ))}
       <p className={s.small}>From <a href="https://github.com/swisskyrepo/PayloadsAllTheThings" target="_blank" rel="noopener noreferrer">PayloadsAllTheThings</a> by Swissky and contributors, used under the MIT licence. Use it only on systems you are authorised to test.</p>
-    </main>
+    </Sheet>
   );
 }

@@ -76,13 +76,14 @@ Put HTTPS in front of it (Caddy, nginx or your host's proxy), and make sure the 
 | `HEXBRAIN_OPEN_API` | Set to `true` to leave the AI endpoints open even with sign-in on |
 | `HEXBRAIN_API_KEY` | An owner key that always works on the AI endpoints |
 | `HEXBRAIN_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call `/api/mcp` |
+| `HEXBRAIN_PROXY_HOPS` | How many proxies sit in front of the app (default 1); used to read the visitor's real address for request limits |
 | `HEXBRAIN_DB` | Path to the SQLite file, if not `data/hexbrain.db` |
 
-Built in: security headers, no remote images in write-ups, a request limit per visitor (600 a minute for the site, 90 a minute for the AI endpoints), a sitemap, `robots.txt`, and share previews.
+Built in: security headers, no remote images in write-ups, request limits (per visitor: 240 pages and 600 map requests a minute; AI endpoints: 90 a minute and 5,000 a day per account, 240 a minute per address, 64 KB per request, 10 messages per MCP batch), a sitemap, `robots.txt`, and share previews.
 
 ## Accounts and API keys
 
-People sign in with Google on `/account`, see their profile, and create up to five API keys. Keys are shown once and stored only as hashes. Each key may make 90 requests a minute, and the account page shows when each was last used.
+People sign in with Google on `/account`, see their profile, and create up to five API keys. Keys are shown once and stored only as hashes. Limits count per account, not per key (90 requests a minute, 5,000 a day), and the account page shows when each was last used.
 
 To turn it on, create an OAuth client ID (type "Web application") in the [Google Cloud console](https://console.cloud.google.com/apis/credentials), add `<your address>/auth/google/callback` as an authorised redirect address, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `HEXBRAIN_PUBLIC_URL`.
 
@@ -97,9 +98,13 @@ Connect AI appears only for people who are signed in.
 | `src/components/map/layout.ts` | Geometry of both dials |
 | `src/components/map/renderer.ts` | Drawing, labels, signals and pointer handling |
 | `src/components/MapView.tsx` | The page around the map: panel, search, Connect AI |
+| `src/components/Sheet.tsx` | The shell every text page sits on: header, corner marks, dial, footer |
+| `src/components/Bars.tsx` | The marks the text pages share with the map: strips of lines, severity pips, meters |
+| `src/app/plain.module.css` | Styles for the content of the text pages |
 | `src/lib/db.ts` | Database access and the map data |
 | `src/lib/ai.ts` | The ten AI tools, shared by MCP and REST |
 | `src/lib/auth.ts` | Accounts, sessions and API keys |
+| `src/lib/guard.ts`, `src/lib/rate.ts` | Who may call the AI endpoints, how often and how large a request may be |
 | `src/components/Find.tsx` | Search |
 | `src/lib/taxonomy.ts` | How HackerOne weaknesses group into classes |
 | `src/lib/site.ts` | Name, wording, address and the logo mark |

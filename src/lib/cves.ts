@@ -46,7 +46,7 @@ export function parseTech(t: string): { name: string; version: string | null } {
   return m && m[1].trim() ? { name: m[1].trim(), version: m[2] } : { name: t.trim(), version: null };
 }
 const parts = (v: string) => v.split(/[.\-_]/).map((x) => parseInt(x, 10)).filter((x) => !Number.isNaN(x));
-export function compareVersions(a: string, b: string): number {
+function compareVersions(a: string, b: string): number {
   const x = parts(a), y = parts(b);
   for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
   return 0;

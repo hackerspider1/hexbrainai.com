@@ -12,12 +12,11 @@ const sha = (v: string) => createHash("sha256").update(v).digest("hex");
 const token = (bytes = 32) => randomBytes(bytes).toString("base64url");
 const same = (a: string, b: string) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 
-export const googleReady = () => !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 /** Sign-in is open as soon as the Google details are in place. */
-export const signInLive = googleReady;
+export const signInLive = () => !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 /** Whether the API needs a key. The owner can leave it open with HEXBRAIN_OPEN_API=true. */
 // On the live site it always needs one, so nothing is open by accident; on a developer's machine it is open until keys are set up.
-export const keysRequired = () => process.env.HEXBRAIN_OPEN_API !== "true" && (process.env.NODE_ENV === "production" || googleReady() || !!process.env.HEXBRAIN_API_KEY);
+export const keysRequired = () => process.env.HEXBRAIN_OPEN_API !== "true" && (process.env.NODE_ENV === "production" || signInLive() || !!process.env.HEXBRAIN_API_KEY);
 export const cookieOptions = (maxAge: number) => ({ httpOnly: true, secure: SITE.url.startsWith("https://"), sameSite: "lax" as const, path: "/", maxAge });
 
 export type User = { id: number; email: string | null; name: string | null; picture: string | null; created_at: string };
@@ -75,16 +74,16 @@ export function deleteUser(userId: number) {
   db().prepare("DELETE FROM users WHERE id = ?").run(userId);
 }
 
-/** Who is calling the API: `id` names the key (for request limits), or is empty when the API is open and no key was sent. Null means refuse. */
+/** Who is calling the API: `id` names the account (for request limits, so extra keys buy nothing), or is empty when the API is open and no key was sent. Null means refuse. */
 export function identify(req: Request): { id: string } | null {
   const sent = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim() || req.headers.get("x-api-key") || "";
   const owner = process.env.HEXBRAIN_API_KEY;
   if (owner && sent && same(sent, owner)) return { id: "owner" };
   if (sent.startsWith("sk_")) {
-    const row = db().prepare("SELECT id FROM api_keys WHERE hash = ? AND revoked_at IS NULL").get(sha(sent)) as { id: number } | undefined;
+    const row = db().prepare("SELECT id, user_id FROM api_keys WHERE hash = ? AND revoked_at IS NULL").get(sha(sent)) as { id: number; user_id: number } | undefined;
     if (!row) return null;
     db().prepare("UPDATE api_keys SET requests = requests + 1, last_used_at = ? WHERE id = ?").run(new Date().toISOString(), row.id);
-    return { id: "key" + row.id };
+    return { id: "user" + row.user_id };
   }
   return keysRequired() ? null : { id: "" };
 }

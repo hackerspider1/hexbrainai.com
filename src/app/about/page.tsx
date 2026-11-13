@@ -1,5 +1,5 @@
 import Link from "next/link";
-import Mark from "@/components/Mark";
+import Sheet from "@/components/Sheet";
 import { getGraph } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import s from "../plain.module.css";
@@ -14,8 +14,7 @@ export const metadata = {
 export default function About() {
   const g = getGraph(), n = (v: number) => v.toLocaleString("en-US");
   return (
-    <main className={s.page}>
-      <Link href="/" className={s.brand}><Mark />{SITE.name}</Link>
+    <Sheet here="about" className={s.page}>
       <h1>{SITE.tagline}</h1>
       <p>
         {SITE.name} is a map of {n(g.total)} publicly disclosed bug bounty reports from {n(g.programs)} programs, grouped into {n(g.classes.length)} vulnerability
@@ -58,6 +57,6 @@ export default function About() {
         programs that disclosed them; program names and logos belong to their owners. To have something removed, contact the site owner.
       </p>
       <p><Link href="/">Open the map</Link> · <Link href="/browse">Browse as a list</Link></p>
-    </main>
+    </Sheet>
   );
 }

@@ -1,6 +1,5 @@
 /* eslint-disable @next/next/no-img-element */
-import Link from "next/link";
-import Mark from "@/components/Mark";
+import Sheet from "@/components/Sheet";
 import { MAX_KEYS, currentUser, keyTotals, listKeys, signInLive } from "@/lib/auth";
 import { SITE } from "@/lib/site";
 import { signOutAction } from "./actions";
@@ -31,19 +30,10 @@ const day = (d: string | null) => (d ? new Date(d).toLocaleDateString("en-GB", {
 
 export default async function Account({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const user = await currentUser(), error = ERRORS[(await searchParams).error || ""];
-  const top = (
-    <header className={s.top}>
-      <Link href="/" className={s.brand}><Mark />{SITE.name}</Link>
-      <nav>
-        <Link href="/">Back to the map</Link>
-        {user && <form action={signOutAction}><button>Sign out</button></form>}
-      </nav>
-    </header>
-  );
+  const out = user ? <form action={signOutAction}><button>Sign out</button></form> : null;
 
   if (!user) return (
-    <main className={s.page}>
-      {top}
+    <Sheet here="account" className={s.page} actions={out}>
       <div className={s.split}>
         <section className={s.enter}>
           <p className={s.tag}>Account</p>
@@ -58,16 +48,15 @@ export default async function Account({ searchParams }: { searchParams: Promise<
         <aside className={s.unlocks} aria-label="What a key unlocks">
           <h2>What a key unlocks</h2>
           <dl>{UNLOCKS.map(([name, text]) => <div key={name}><dt>{name}</dt><dd>{text}</dd></div>)}</dl>
-          <p>Read-only access, 90 requests a minute per key.</p>
+          <p>Read-only access, 90 requests a minute and 5,000 a day per account.</p>
         </aside>
       </div>
-    </main>
+    </Sheet>
   );
 
   const keys = listKeys(user.id), totals = keyTotals(user.id);
   return (
-    <main className={s.page}>
-      {top}
+    <Sheet here="account" className={s.page} actions={out}>
       <section className={s.who}>
         {user.picture ? <img src={user.picture} alt="" width={64} height={64} referrerPolicy="no-referrer" /> : <i>{(user.name || user.email || "?").slice(0, 1).toUpperCase()}</i>}
         <div>
@@ -86,7 +75,7 @@ export default async function Account({ searchParams }: { searchParams: Promise<
         <p className={s.dim}>Removes your profile and every key. Keys stop working straight away. This cannot be undone.</p>
         <DeleteAccount />
       </section>
-    </main>
+    </Sheet>
   );
 }
 

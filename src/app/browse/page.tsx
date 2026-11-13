@@ -1,8 +1,8 @@
 import Link from "next/link";
-import Mark from "@/components/Mark";
+import Bars from "@/components/Bars";
+import Sheet from "@/components/Sheet";
 import { classPath, n, programPath } from "@/lib/browse";
 import { getGraph } from "@/lib/db";
-import { SITE } from "@/lib/site";
 import s from "../plain.module.css";
 
 export const dynamic = "force-dynamic";
@@ -15,12 +15,21 @@ export const metadata = {
 export default function Browse() {
   const g = getGraph();
   return (
-    <main className={`${s.page} ${s.wide}`}>
-      <Link href="/" className={s.brand}><Mark />{SITE.name}</Link>
+    <Sheet here="browse" className={`${s.page} ${s.wide}`}>
       <h1>Browse {n(g.total)} disclosed bug bounty reports</h1>
-      <p className={s.lede}>By vulnerability class and weakness, or by the program they were reported to. Prefer the picture? <Link href="/">Open the map.</Link> Stuck behind a filter or a fix? <Link href="/bypasses">See the bypass library</Link> , the <Link href="/payloads">payloads</Link> and the <Link href="/cves">CVE library</Link>.</p>
+      <p className={s.lede}>By vulnerability class and weakness, or by the program they were reported to. Stuck behind a filter or a fix? See the <Link href="/bypasses">bypass library</Link>, the <Link href="/payloads">payloads</Link> and the <Link href="/cves">CVE library</Link>.</p>
+
+      <div className={s.facts}>
+        <div><b>{n(g.total)}</b><span>disclosed reports</span></div>
+        <div><b>{n(g.classes.length)}</b><span>vulnerability classes</span></div>
+        <div><b>{n(g.classes.reduce((t, c) => t + c.weaknesses.length, 0))}</b><span>weaknesses</span></div>
+        <div><b>{n(g.topPrograms.length)}</b><span>programs</span></div>
+      </div>
 
       <h2>Vulnerability classes</h2>
+      <Bars rows={g.classes.map((c) => ({ name: c.name, count: c.count, href: classPath(c.id) }))} />
+
+      <h2>Weaknesses in each class</h2>
       {g.classes.map((c) => (
         <section key={c.id}>
           <h3><Link href={classPath(c.id)}>{c.name}</Link> <small>{n(c.count)} reports</small></h3>
@@ -34,6 +43,6 @@ export default function Browse() {
       <ul className={s.cols}>
         {g.topPrograms.map((p) => <li key={p.name}><Link href={programPath(p.name)}>{p.name}</Link> <small>{n(p.count)}</small></li>)}
       </ul>
-    </main>
+    </Sheet>
   );
 }

@@ -1,11 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import Mark from "@/components/Mark";
+import Sheet from "@/components/Sheet";
 import ReportList from "@/components/ReportList";
 import { n } from "@/lib/browse";
 import { defenceCounts, reportsByDefence } from "@/lib/db";
 import { defenceById } from "@/lib/defences.mjs";
-import { SITE } from "@/lib/site";
 import s from "../../plain.module.css";
 
 export const dynamic = "force-dynamic";
@@ -27,12 +26,11 @@ export default async function BypassPage({ params }: Props) {
   const count = defenceCounts()[d.id] || 0, rows = reportsByDefence(d.id, 100);
   if (!count) notFound();
   return (
-    <main className={`${s.page} ${s.wide}`}>
-      <Link href="/" className={s.brand}><Mark />{SITE.name}</Link>
+    <Sheet here="bypasses" className={`${s.page} ${s.wide}`}>
       <p className={s.crumbs}><Link href="/browse">Browse</Link> / <Link href="/bypasses">Bypasses</Link> / {d.name}</p>
       <h1>Getting past {d.name.toLowerCase().replace(/^(csrf|csp|ssrf|url|cors)\b/, (m) => m.toUpperCase())}</h1>
       <p className={s.lede}>{d.about}. {n(count)} disclosed reports got past one{count > rows.length ? `; the ${rows.length} most upvoted are below` : ""}.</p>
       <ReportList rows={rows} />
-    </main>
+    </Sheet>
   );
 }

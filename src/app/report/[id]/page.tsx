@@ -3,7 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import Writeup from "@/components/Writeup";
 import { getReport, relatedReports } from "@/lib/db";
-import Mark from "@/components/Mark";
+import { Sev } from "@/components/Bars";
+import Sheet from "@/components/Sheet";
 import { classPath, jsonLd, programPath } from "@/lib/browse";
 import { SITE } from "@/lib/site";
 import { classOf } from "@/lib/taxonomy";
@@ -38,28 +39,20 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const h1 = `https://hackerone.com/reports/${r.id}`;
   const facts: [string, string | null][] = [
     ["Program", r.program_name || r.program],
-    ["Severity", r.severity && r.severity !== "none" ? r.severity : null],
-    ["Bounty", money(r.bounty)],
     ["Weakness", weakness ? weakness + (guessed ? " (our guess from the title; the program set none)" : "") : null],
     ["Class", cls.name],
     ["Asset", r.asset ? `${r.asset}${r.asset_type ? ` (${r.asset_type.toLowerCase().replace(/_/g, " ")})` : ""}` : null],
     ["Reported by", r.reporter],
     ["Submitted", day(r.submitted_at)],
-    ["Disclosed", day(r.disclosed_at)],
-    ["Upvotes", r.votes ? String(r.votes) : null],
     ["CVE", cves.length ? cves.join(", ") : null],
   ];
   return (
-    <main className={s.page}>
+    <Sheet here="browse" className={s.page} actions={<a href={h1} target="_blank" rel="noreferrer">Open on HackerOne</a>}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd({
         "@context": "https://schema.org", "@type": "TechArticle", headline: r.title.slice(0, 110), url: `${SITE.url}/report/${r.id}`,
         datePublished: r.disclosed_at || undefined, author: r.reporter ? { "@type": "Person", name: r.reporter } : undefined,
         about: [weakness, cls.name].filter(Boolean), isBasedOn: h1, publisher: { "@type": "Organization", name: SITE.name, url: SITE.url },
       }) }} />
-      <header className={s.top}>
-        <Link href="/" className={s.brand}><Mark size={20} />{SITE.name}</Link>
-        <a href={h1} target="_blank" rel="noreferrer" className={s.out}>Open on HackerOne</a>
-      </header>
       <article className={s.grid}>
         <div className={s.main}>
           <p className={s.tag}>
@@ -67,6 +60,12 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             {r.program_name || r.program ? `${r.program_name || r.program} · ` : ""}Report #{r.id}
           </p>
           <h1>{r.title}</h1>
+          <div className={s.read}>
+            {r.severity && r.severity !== "none" && <div><b><Sev level={r.severity} /> {r.severity}</b><span>severity</span></div>}
+            {r.bounty ? <div><b>{money(r.bounty)}</b><span>bounty</span></div> : null}
+            {r.votes ? <div><b>{r.votes.toLocaleString("en-US")}</b><span>upvotes</span></div> : null}
+            {r.disclosed_at && <div><b>{day(r.disclosed_at)}</b><span>disclosed</span></div>}
+          </div>
           {r.summary && (
             <section className={s.summary}>
               <h2>Summary</h2>
@@ -108,9 +107,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           )}
         </aside>
       </article>
-      <footer className={s.foot}>
-        This report was disclosed publicly on HackerOne and belongs to its author and the program. <a href={h1} target="_blank" rel="noreferrer">See the original</a> · <Link href="/about">About {SITE.name}</Link>
-      </footer>
-    </main>
+      <p className={s.foot}>This report was disclosed publicly on HackerOne and belongs to its author and the program. <a href={h1} target="_blank" rel="noreferrer">See the original</a></p>
+    </Sheet>
   );
 }
