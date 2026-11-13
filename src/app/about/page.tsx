@@ -1,6 +1,5 @@
 import Link from "next/link";
 import Mark from "@/components/Mark";
-import { signInLive } from "@/lib/auth";
 import { getGraph } from "@/lib/db";
 import { SITE } from "@/lib/site";
 import s from "../plain.module.css";
@@ -29,19 +28,22 @@ export default function About() {
         <li>Lines through the middle join classes that turn up in the same reports. Thicker lines mean more shared reports.</li>
         <li>The Programs view shows every program as a strip of its reports, with its logo inside the ring.</li>
         <li>Opening a program can mark its reports on the vulnerability map, to show where that program has been hit.</li>
+        <li>The <Link href="/bypasses">bypass library</Link> groups reports by the protection they got past: WAFs, filters, 2FA, earlier fixes and more.</li>
       </ul>
 
       <h2>Use it from an AI assistant</h2>
       <p>
-        Claude, ChatGPT and other assistants will be able to search the reports, read any write-up, pull a playbook for a bug class, and check what a program
+        Claude, ChatGPT and other assistants can search the reports, read any write-up, pull a playbook for a bug class, and check what a program
         has already paid for. Access is read-only.{" "}
-        {signInLive() ? <><Link href="/account">Sign in with Google</Link> to create an API key and get the connection details.</> : "This opens together with sign-in, which is coming soon."}
+        <Link href="/account">Sign in with Google</Link> to create an API key and get the connection details.
       </p>
 
       <h2>Where the data comes from</h2>
       <ul>
         <li>The list of reports comes from the open <a href="https://github.com/reddelexc/hackerone-reports" target="_blank" rel="noopener noreferrer">hackerone-reports</a> dataset.</li>
         <li>Each write-up comes from that report&apos;s own public page on HackerOne. Every report here links back to it.</li>
+        <li>The <Link href="/payloads">payloads and techniques</Link> section is <a href="https://github.com/swisskyrepo/PayloadsAllTheThings" target="_blank" rel="noopener noreferrer">PayloadsAllTheThings</a> by Swissky and contributors, used under the MIT licence.</li>
+        <li>The <Link href="/cves">CVE library</Link> takes its checks from <a href="https://github.com/projectdiscovery/nuclei-templates" target="_blank" rel="noopener noreferrer">nuclei-templates</a> (MIT licence), its exploited-in-the-wild list from CISA, and its likelihood scores from EPSS.</li>
         <li>Where a program filed a report without a weakness, the class shown is our guess from the title, and the report page says so.</li>
         <li>{n(g.withBody)} write-ups are stored so far; the rest load from HackerOne the first time someone opens them.</li>
       </ul>

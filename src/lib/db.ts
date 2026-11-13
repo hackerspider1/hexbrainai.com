@@ -32,14 +32,18 @@ export type ReportRow = {
   weakness_guess: string | null; logo?: string | null;
 };
 // [id, title, severity index, bounty, votes, program]
-export type Leaf = [number, string, number, number, number, string];
+// On the CVE map the same shape is used for a CVE: [CVE id, name, band digit, 0, likelihood in percent, ""].
+export type Leaf = [number | string, string, number, number, number, string];
 // `members` lists the HackerOne weakness names folded into this node (one name unless it is a "rarer" group).
 // `sev` has one digit per report (its severity, 0 to 4), most upvoted first: enough to draw every report as a dot
 // without sending its title. Titles load per weakness, on demand.
 export type GraphWeakness = { name: string; count: number; bounty: number; sev: string };
 export type GraphClass = { id: string; name: string; count: number; bounty: number; weaknesses: GraphWeakness[] };
 export type GraphProgram = { name: string; count: number; bounty: number; logo: string | null; classes: [string, number][] };
+// One year of the CVE map: how many CVEs sit in each band (exploited, ready check, likely, possible, unlikely).
+export type GraphYear = { year: number; bands: number[] };
 export type Graph = {
+  cveYears: GraphYear[]; cveRing: { id: string; name: string }[];
   total: number; withBody: number; programs: number; weaknessCount: number; totalBounty: number;
   classes: GraphClass[]; links: [string, string, number][]; topPrograms: GraphProgram[];
 };
@@ -116,16 +120,30 @@ export function getGraph(): Graph {
     .map(([name, p]) => ({ name, count: p.count, bounty: p.bounty, logo: logos.get(name) ?? null, classes: [...p.classes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6) }));
   const withBody = (d.prepare("SELECT COUNT(*) n FROM reports WHERE body IS NOT NULL").get() as { n: number }).n;
 
-  const graph: Graph = { total: rows.length, withBody, programs: programs.size, weaknessCount: weak.size, totalBounty, classes: list, links, topPrograms };
+  const yearOf = new Map<number, GraphYear>();
+  for (const r of d.prepare("SELECT year, band, COUNT(*) n FROM cve_map GROUP BY year, band ORDER BY year").all() as { year: number; band: number; n: number }[]) {
+    if (!yearOf.has(r.year)) yearOf.set(r.year, { year: r.year, bands: [0, 0, 0, 0, 0] });
+    yearOf.get(r.year)!.bands[r.band] = r.n;
+  }
+  const cveYears = [...yearOf.values()];
+  // The exploited CVEs listed most recently that we can check for: they circle the main map.
+  const cveRing = d.prepare("SELECT id, name FROM cves WHERE kev = 1 AND template IS NOT NULL ORDER BY kev_added DESC, epss DESC LIMIT 26").all().map((r) => ({ ...r })) as { id: string; name: string }[];
+  const graph: Graph = {
+    cveYears, cveRing, total: rows.length, withBody, programs: programs.size, weaknessCount: weak.size, totalBounty, classes: list, links, topPrograms };
   cached = { at: Date.now(), graph };
   return graph;
 }
 
-/** Turns typed words into a full-text query: every word must appear; the last one may be a prefix. */
-export function ftsQuery(q: string, inWriteups: boolean): string | null {
-  const words = q.split(/[^\p{L}\p{N}_]+/u).filter((w) => w.length > 1).slice(0, 8);
+/** Turns typed words into a full-text query: every word must appear; the last one may be a prefix. Filler words are ignored. */
+const FILLER = new Set("a an and are as at be by for from how in into is it of on or that the their this to was with via using can other".split(" "));
+/** With `any`, a report needs only some of the words; the best matches still come first. */
+export function ftsQuery(q: string, inWriteups: boolean, any = false): string | null {
+  let words = q.split(/[^\p{L}\p{N}_]+/u).filter((w) => w.length > 1);
+  const meaningful = words.filter((w) => !FILLER.has(w.toLowerCase()));
+  if (meaningful.length) words = meaningful;
+  words = words.slice(0, 10);
   if (!words.length) return null;
-  const expr = words.map((w, i) => `"${w}"${i === words.length - 1 ? "*" : ""}`).join(" ");
+  const expr = words.map((w, i) => `"${w}"${!any && i === words.length - 1 ? "*" : ""}`).join(any ? " OR " : " ");
   return inWriteups ? expr : `{title program_name weakness} : (${expr})`;
 }
 /** SQL that joins reports to their full-text matches, with a relevance rank (lower is better). */
@@ -153,6 +171,38 @@ export function getProgramDots(program: string): Record<string, number[]> {
     if (r.p === program) (out[w] ||= []).push(i);
   }
   return out;
+}
+
+/** How many reports got past each protection. */
+export function defenceCounts(): Record<string, number> {
+  return Object.fromEntries((db().prepare("SELECT tag, COUNT(*) n FROM report_tags GROUP BY tag").all() as { tag: string; n: number }[]).map((r) => [r.tag, r.n]));
+}
+/** The most upvoted reports that got past one protection. */
+export function reportsByDefence(tag: string, limit = 100) {
+  return db().prepare(
+    `SELECT id, title, ${PROGRAM} AS program, severity, ${WEAK} AS weakness, bounty, votes FROM reports
+     WHERE id IN (SELECT report_id FROM report_tags WHERE tag = ?) ORDER BY votes DESC, id DESC LIMIT ?`
+  ).all(tag, limit).map((r) => ({ ...r })) as { id: number; title: string; program: string | null; severity: string | null; weakness: string | null; bounty: number | null; votes: number }[];
+}
+
+export type Technique = { id: number; topic: string; class_id: string | null; path: string; text: string; url: string };
+/** Topics in the reference collection, with how many passages each has. */
+export function techniqueTopics() {
+  return db().prepare("SELECT topic, class_id, COUNT(*) n FROM techniques GROUP BY topic ORDER BY topic").all().map((r) => ({ ...r })) as { topic: string; class_id: string | null; n: number }[];
+}
+export function techniquesOf(topic: string): Technique[] {
+  return db().prepare("SELECT id, topic, class_id, path, text, url FROM techniques WHERE topic = ? ORDER BY id").all(topic).map((r) => ({ ...r })) as Technique[];
+}
+/** Reference passages matching some words, best first. `scope` narrows to one topic or one vulnerability class. */
+export function searchTechniques(words: string[], scope: { topic?: string; classId?: string | null }, limit: number): Technique[] {
+  const where: string[] = [], args: (string | number)[] = [];
+  if (scope.topic) { where.push("t.topic = ?"); args.push(scope.topic); }
+  else if (scope.classId) { where.push("t.class_id = ?"); args.push(scope.classId); }
+  if (!words.length) return db().prepare(`SELECT id, topic, class_id, path, text, url FROM techniques t ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY id LIMIT ?`).all(...args, limit).map((r) => ({ ...r })) as Technique[];
+  return db().prepare(
+    `SELECT t.id, t.topic, t.class_id, t.path, t.text, t.url FROM techniques_fts JOIN techniques t ON t.id = techniques_fts.rowid
+     WHERE techniques_fts MATCH ? ${where.length ? "AND " + where.join(" AND ") : ""} ORDER BY bm25(techniques_fts, 3.0, 6.0, 1.0) LIMIT ?`
+  ).all(words.map((w) => `"${w.replace(/"/g, "")}"`).join(" OR "), ...args, limit).map((r) => ({ ...r })) as Technique[];
 }
 
 export type ListQuery = { q?: string; weakness?: string; cls?: string; program?: string; sort?: string; offset?: number; limit?: number };

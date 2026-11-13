@@ -58,3 +58,35 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_at TEXT NOT NULL, last_used_at TEXT, requests INTEGER NOT NULL DEFAULT 0, revoked_at TEXT
 );
 CREATE INDEX IF NOT EXISTS api_keys_user ON api_keys(user_id);
+
+-- Derived by `node scripts/ingest.mjs index`: write-ups cut into passages for precise search, the protections
+-- each report got past, and which earlier report a bypass refers to.
+CREATE TABLE IF NOT EXISTS sections (id INTEGER PRIMARY KEY, report_id INTEGER NOT NULL, heading TEXT, text TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS sections_report ON sections(report_id);
+CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(heading, text, content='sections', content_rowid='id', tokenize='porter unicode61');
+CREATE TABLE IF NOT EXISTS report_tags (report_id INTEGER NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (report_id, tag));
+CREATE INDEX IF NOT EXISTS report_tags_tag ON report_tags(tag);
+CREATE TABLE IF NOT EXISTS report_refs (report_id INTEGER NOT NULL, ref_id INTEGER NOT NULL, PRIMARY KEY (report_id, ref_id));
+
+-- Reference techniques and payloads from open collections (see THIRD_PARTY.md), cut into passages by heading.
+-- Filled by `node scripts/ingest.mjs payloads`.
+CREATE TABLE IF NOT EXISTS techniques (
+  id INTEGER PRIMARY KEY, source TEXT NOT NULL, topic TEXT NOT NULL, class_id TEXT, path TEXT NOT NULL, text TEXT NOT NULL, url TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS techniques_topic ON techniques(topic);
+CREATE VIRTUAL TABLE IF NOT EXISTS techniques_fts USING fts5(topic, path, text, content='techniques', content_rowid='id', tokenize='porter unicode61');
+
+-- Known CVEs that can be checked for remotely, with how to check, whether they are exploited in the wild, and how
+-- likely exploitation is. Filled by `node scripts/ingest.mjs cves` (sources in THIRD_PARTY.md).
+CREATE TABLE IF NOT EXISTS cves (
+  id TEXT PRIMARY KEY, name TEXT, severity TEXT, description TEXT, impact TEXT, remediation TEXT, vendor TEXT, product TEXT, cpe TEXT,
+  cvss REAL, cwe TEXT, tags TEXT, verified INTEGER DEFAULT 0, protocol TEXT, refs TEXT, template_path TEXT, template TEXT, check_summary TEXT,
+  kev INTEGER DEFAULT 0, kev_added TEXT, kev_ransomware INTEGER DEFAULT 0, kev_action TEXT, epss REAL, epss_pct REAL
+);
+CREATE INDEX IF NOT EXISTS cves_product ON cves(product);
+CREATE VIRTUAL TABLE IF NOT EXISTS cves_fts USING fts5(id, name, vendor, product, tags, description, content='cves', tokenize='unicode61');
+
+-- Every registered CVE id (from the public EPSS list). For the CVE map each sits in a band of its year
+-- (0 exploited, 1 has a ready check, 2 likely, 3 possible, 4 unlikely) at position `pos`, most likely first.
+CREATE TABLE IF NOT EXISTS cve_map (id TEXT PRIMARY KEY, year INTEGER NOT NULL, band INTEGER NOT NULL, pos INTEGER NOT NULL, epss REAL);
+CREATE INDEX IF NOT EXISTS cve_map_place ON cve_map(year, band, pos);

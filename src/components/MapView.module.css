@@ -30,8 +30,8 @@
   background: radial-gradient(ellipse at 30% 60%, var(--bg) 35%, transparent 72%); }
 .hero h1, .empty h1 { font-size: 1em; line-height: 1.3; font-weight: 400; margin: 0 0 .7em; }
 .hero p, .empty p { font-size: 1em; line-height: 1.3; font-weight: 400; margin: 0 0 .7em; color: var(--dim); }
-.hero p:last-child { color: var(--ink); }
-.hero p:last-child { margin-bottom: 0; }
+.hero p.act { color: var(--ink); }
+.hero p.links { margin: 0; }
 .empty code { font-variation-settings: "MONO" .5; font-size: .9em; color: var(--hot); }
 .link { text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
 .link:hover { color: var(--hot); }
@@ -130,9 +130,9 @@ button.stat:hover b, button.stat:hover span { color: var(--hot); }
 .inline { text-decoration: underline; text-underline-offset: 2px; color: var(--ink); }
 .inline:hover { color: var(--hot); }
 
-.about { color: var(--dim); margin-left: 10px; text-underline-offset: 2px; text-decoration-thickness: 1px; }
-.about:hover { color: var(--hot); }
+.hero .links { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.hero .links a { color: var(--dim); text-underline-offset: 2px; text-decoration-thickness: 1px; white-space: nowrap; }
+.hero .links a:hover { color: var(--hot); }
 
 .acct { display: inline-flex; align-items: center; text-decoration: none; }
 .acct img { border-radius: 50%; display: block; }
-.acct em { font-style: normal; font-size: .625rem; color: var(--hot); border: 1px solid currentColor; border-radius: 999px; padding: 1px 6px; margin-left: 7px; }

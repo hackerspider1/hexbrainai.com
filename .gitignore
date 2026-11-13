@@ -46,3 +46,5 @@ next-env.d.ts
 !.env.example
 /.next-check
 /.next-auth-test
+/.next-share
+/data/sources

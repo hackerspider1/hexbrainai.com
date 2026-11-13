@@ -18,7 +18,7 @@ export default function Browse() {
     <main className={`${s.page} ${s.wide}`}>
       <Link href="/" className={s.brand}><Mark />{SITE.name}</Link>
       <h1>Browse {n(g.total)} disclosed bug bounty reports</h1>
-      <p className={s.lede}>By vulnerability class and weakness, or by the program they were reported to. Prefer the picture? <Link href="/">Open the map.</Link></p>
+      <p className={s.lede}>By vulnerability class and weakness, or by the program they were reported to. Prefer the picture? <Link href="/">Open the map.</Link> Stuck behind a filter or a fix? <Link href="/bypasses">See the bypass library</Link> , the <Link href="/payloads">payloads</Link> and the <Link href="/cves">CVE library</Link>.</p>
 
       <h2>Vulnerability classes</h2>
       {g.classes.map((c) => (

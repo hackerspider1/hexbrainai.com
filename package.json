@@ -13,15 +13,19 @@
     "test:e2e": "node tests/e2e.mjs",
     "ingest:import": "node scripts/ingest.mjs import",
     "ingest:logos": "node scripts/ingest.mjs logos --max 500",
-    "ingest:refresh": "node scripts/ingest.mjs import && node scripts/ingest.mjs details --max 20000 && node scripts/ingest.mjs logos --max 500",
-    "test:auth": "node tests/auth.mjs"
+    "ingest:refresh": "node scripts/ingest.mjs import && node scripts/ingest.mjs details --max 20000 && node scripts/ingest.mjs index && node scripts/ingest.mjs payloads && node scripts/ingest.mjs cves && node scripts/ingest.mjs logos --max 500",
+    "test:auth": "node tests/auth.mjs",
+    "ingest:index": "node scripts/ingest.mjs index",
+    "ingest:payloads": "node scripts/ingest.mjs payloads",
+    "ingest:cves": "node scripts/ingest.mjs cves"
   },
   "dependencies": {
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

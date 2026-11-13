@@ -4,6 +4,9 @@
 //   node scripts/ingest.mjs list [--max 500]     report list from the official Hacker API (needs a token)
 //   node scripts/ingest.mjs details [--max 200]  full write-up for each report from its public JSON page
 //   node scripts/ingest.mjs import [file|url]   report list from the open hackerone-reports dataset (no token)
+//   node scripts/ingest.mjs index                 build the bypass library from the stored write-ups
+//   node scripts/ingest.mjs payloads              import the PayloadsAllTheThings reference collection
+//   node scripts/ingest.mjs cves                  import CVE checks, the exploited-in-the-wild list and likelihood scores
 //   node scripts/ingest.mjs logos [--max 60]     logo for the programs with the most reports
 //   node scripts/ingest.mjs seed <file>          add reports by id (one id per line), no token needed
 //   node scripts/ingest.mjs status
@@ -11,9 +14,13 @@
 // Token: set H1_API_USERNAME and H1_API_TOKEN in .env.local
 // (create one at https://hackerone.com/settings/api_token/edit).
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, mkdirSync, existsSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
+import { parse as parseYaml } from "yaml";
+import { passages, referencedReports, tagReport } from "../src/lib/defences.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 for (const f of [".env.local", ".env"]) {
@@ -232,6 +239,167 @@ async function logos() {
   console.log(`Done. ${saved} logos saved.`);
 }
 
+// Derives the bypass library from the stored reports: passages for precise search, the protections each report
+// got past, and links from a bypass to the earlier report it refers to. Safe to run again at any time.
+function buildIndex() {
+  const rows = db.prepare("SELECT id, title, summary, body FROM reports").all(), known = new Set(rows.map((r) => r.id));
+  const sec = db.prepare("INSERT INTO sections (report_id, heading, text) VALUES (?,?,?)");
+  const tag = db.prepare("INSERT OR IGNORE INTO report_tags (report_id, tag) VALUES (?,?)");
+  const ref = db.prepare("INSERT OR IGNORE INTO report_refs (report_id, ref_id) VALUES (?,?)");
+  let nSec = 0, nTag = 0, nRef = 0;
+  db.exec("BEGIN; DELETE FROM sections; DELETE FROM report_tags; DELETE FROM report_refs;");
+  for (const r of rows) {
+    const text = [r.summary, r.body].filter(Boolean).join("\n\n");
+    if (r.body) for (const p of passages(r.body)) { sec.run(r.id, p.heading || null, p.text); nSec++; }
+    const tags = tagReport(r.title, text), refs = referencedReports(r.title, text).filter((id) => id !== r.id && known.has(id));
+    if (refs.length && !tags.includes("fix")) tags.push("fix");
+    for (const t of tags) { tag.run(r.id, t); nTag++; }
+    if (tags.length) for (const id of refs) { ref.run(r.id, id); nRef++; }
+  }
+  db.exec("COMMIT; INSERT INTO sections_fts(sections_fts) VALUES ('rebuild');");
+  setMeta("indexed_at", new Date().toISOString());
+  const reports = db.prepare("SELECT COUNT(DISTINCT report_id) n FROM report_tags").get().n;
+  console.log(`Done. ${nSec} passages, ${reports} bypass reports with ${nTag} protection tags, ${nRef} links to earlier reports.`);
+}
+
+// Imports PayloadsAllTheThings (MIT licence, see THIRD_PARTY.md): every topic's markdown, cut into passages by heading.
+// The files are only read as text. Nothing from the download is run.
+const PATT = "https://github.com/swisskyrepo/PayloadsAllTheThings";
+const TOPIC_CLASS = [[/xss|dom clobber|css injection|tabnabbing/i, "XSS"], [/server side request|dns rebinding/i, "SSRF"], [/cross-site request forgery/i, "CSRF"], [/sql|nosql|orm leak/i, "SQLI"],
+  [/direct object|mass assignment/i, "IDOR"], [/command injection|template injection|deserialization|upload|java rmi|server side include|latex|xslt|csv injection|prompt injection/i, "RCE"],
+  [/traversal|file inclusion|zip slip/i, "TRAV"], [/account takeover|oauth|saml|json web token|brute force/i, "AUTH"], [/open redirect/i, "REDIR"], [/business logic|race condition/i, "LOGIC"],
+  [/denial of service|regular expression/i, "DOS"], [/crlf|smuggling|xxe|ldap|xpath|graphql|parameter pollution|web sockets/i, "INJ"], [/randomness|type juggling/i, "CRYPTO"],
+  [/cors|clickjacking|cache|reverse proxy|virtual hosts|source code management|management interface|dependency confusion|api key/i, "CONF"]];
+function walk(dir) { return readdirSync(dir).flatMap((f) => { const p = join(dir, f); return statSync(p).isDirectory() ? walk(p) : [p]; }); }
+function importPayloads(src) {
+  const dir = src || join(root, "data", "sources", "PayloadsAllTheThings");
+  if (!existsSync(dir)) { mkdirSync(dirname(dir), { recursive: true }); execFileSync("git", ["clone", "--depth", "1", PATT + ".git", dir], { stdio: "inherit" }); }
+  const ins = db.prepare("INSERT INTO techniques (source, topic, class_id, path, text, url) VALUES ('PayloadsAllTheThings',?,?,?,?,?)");
+  let n = 0; const topics = new Set();
+  db.exec("BEGIN; DELETE FROM techniques WHERE source = 'PayloadsAllTheThings';");
+  for (const topic of readdirSync(dir).filter((t) => !/^[._]/.test(t) && statSync(join(dir, t)).isDirectory())) {
+    const classId = (TOPIC_CLASS.find(([re]) => re.test(topic)) || [])[1] ?? null;
+    for (const file of walk(join(dir, topic)).filter((f) => f.endsWith(".md"))) {
+      const rel = file.slice(dir.length + 1), page = `${PATT}/blob/master/${rel.split("/").map(encodeURIComponent).join("/")}`;
+      const trail = []; let buf = [], fence = false, anchor = "";
+      const flush = () => {
+        const text = buf.join("\n").trim(); buf = [];
+        const leaf = trail[trail.length - 1] || "";
+        if (text.length < 40 || /^(references|labs|summary|table of contents)$/i.test(leaf)) return;
+        const path = trail.slice(1).join(" > ") || (rel.endsWith("README.md") ? "Overview" : rel.split("/").pop().replace(/\.md$/, ""));
+        for (let i = 0; i < text.length; i += 6000) { ins.run(topic, classId, path, text.slice(i, i + 6000), page + (anchor ? "#" + anchor : "")); n++; }
+        topics.add(topic);
+      };
+      for (const line of readFileSync(file, "utf8").replace(/\r/g, "").split("\n")) {
+        if (/^\s*(```|~~~)/.test(line)) fence = !fence;
+        const h = !fence && line.match(/^(#{1,4})\s+(.+?)\s*#*$/);
+        if (!h) { buf.push(line); continue; }
+        flush();
+        trail.length = h[1].length - 1; trail[h[1].length - 1] = h[2].replace(/[`*]/g, "").trim();
+        for (let i = 0; i < trail.length; i++) trail[i] ??= "";
+        anchor = h[2].toLowerCase().replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-");
+      }
+      flush();
+    }
+  }
+  db.exec("COMMIT; INSERT INTO techniques_fts(techniques_fts) VALUES ('rebuild');");
+  setMeta("payloads_at", new Date().toISOString());
+  console.log(`Done. ${n} passages from ${topics.size} topics of PayloadsAllTheThings.`);
+}
+
+// CVE library: detection checks from nuclei-templates (MIT), "exploited in the wild" from CISA's KEV catalogue,
+// and exploitation likelihood from EPSS. The templates are only read as text. Nothing from the download is run.
+const NUCLEI = "https://github.com/projectdiscovery/nuclei-templates";
+const KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+const EPSS_URL = "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz";
+const short = (v, n) => { const t = String(v ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n - 1) + "…" : t; };
+/** Says in words what a template sends and what counts as a positive result. */
+function describeCheck(doc) {
+  const out = [];
+  for (const proto of ["http", "requests", "network", "tcp", "javascript", "code", "headless", "dns", "ssl", "websocket"]) {
+    for (const block of Array.isArray(doc[proto]) ? doc[proto] : []) {
+      const sends = [];
+      for (const raw of block.raw || []) sends.push(short(String(raw).split("\n")[0].replace(/ HTTP\/[\d.]+$/, ""), 160));
+      for (const p of block.path || []) sends.push(`${block.method || "GET"} ${short(p, 150)}`);
+      if (block.inputs) sends.push(`${proto} probe to ${short((block.host || []).join(", ") || "the service port", 80)}`);
+      if (sends.length) out.push("Send: " + [...new Set(sends)].slice(0, 5).join(" ; "));
+      const tests = (block.matchers || []).map((m) => {
+        const where = m.part && m.part !== "body" ? ` in ${m.part}` : "", not = m.negative ? "not " : "";
+        if (m.type === "status") return `${not}status ${[].concat(m.status || []).join(" or ")}`;
+        if (m.type === "word") return `${not}contains${where} ${[].concat(m.words || []).slice(0, 4).map((w) => JSON.stringify(short(w, 60))).join(m.condition === "and" ? " and " : " or ")}`;
+        if (m.type === "regex") return `${not}matches${where} /${short([].concat(m.regex || [])[0], 80)}/`;
+        if (m.type === "dsl") return `${not}${short([].concat(m.dsl || []).join(m.condition === "and" ? " and " : " or "), 200)}`;
+        return m.type;
+      });
+      if (tests.length) out.push("Positive when: " + tests.join(block["matchers-condition"] === "and" ? " AND " : " OR "));
+    }
+  }
+  return out.join("\n").slice(0, 2500);
+}
+async function importCves(src) {
+  const dir = src || join(root, "data", "sources", "nuclei-templates");
+  if (!existsSync(dir)) { mkdirSync(dirname(dir), { recursive: true }); execFileSync("git", ["clone", "--depth", "1", NUCLEI + ".git", dir], { stdio: "inherit" }); }
+  else try { execFileSync("git", ["-C", dir, "pull", "-q", "--depth", "1"], { stdio: "ignore" }); } catch { console.log("Could not update the templates; using the copy on disk."); }
+  const ins = db.prepare(`INSERT OR REPLACE INTO cves (id,name,severity,description,impact,remediation,vendor,product,cpe,cvss,cwe,tags,verified,protocol,refs,template_path,template,check_summary)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  let n = 0, bad = 0;
+  db.exec("BEGIN; DELETE FROM cves;");
+  for (const file of walk(dir).filter((f) => /\.ya?ml$/.test(f) && !f.includes("/.git/"))) {
+    const raw = readFileSync(file, "utf8");
+    if (!/^id:\s*CVE-\d{4}-\d+/im.test(raw.slice(0, 300))) continue;
+    let doc; try { doc = parseYaml(raw); } catch { bad++; continue; }
+    const info = doc?.info || {}, cl = info.classification || {}, meta = info.metadata || {};
+    const id = String([].concat(cl["cve-id"] || doc.id)[0] || "").toUpperCase();
+    if (!/^CVE-\d{4}-\d+$/.test(id)) continue;
+    const rel = file.slice(dir.length + 1), one = (v) => (Array.isArray(v) ? v[0] : v) ?? null;
+    ins.run(id, short(info.name, 300), String(info.severity || "").toLowerCase() || null, short(info.description, 3000) || null, short(info.impact, 1000) || null, short(info.remediation, 1000) || null,
+      one(meta.vendor), one(meta.product), one(cl.cpe), Number(cl["cvss-score"]) || null, [].concat(cl["cwe-id"] || []).join(", ") || null,
+      [].concat(info.tags || []).join(","), meta.verified ? 1 : 0, rel.split("/")[0], JSON.stringify([].concat(info.reference || []).slice(0, 12)),
+      rel, raw.replace(/\n# digest:.*$/s, "").slice(0, 30000), describeCheck(doc));
+    n++;
+  }
+  // Exploited in the wild (CISA KEV). CVEs with no check of ours are added too, so the library knows about them.
+  const kev = (await (await fetch(KEV_URL, { headers: { "User-Agent": UA } })).json()).vulnerabilities || [];
+  const mark = db.prepare("UPDATE cves SET kev = 1, kev_added = ?, kev_ransomware = ?, kev_action = ? WHERE id = ?");
+  const add = db.prepare("INSERT INTO cves (id,name,description,vendor,product,cwe,kev,kev_added,kev_ransomware,kev_action,refs) VALUES (?,?,?,?,?,?,1,?,?,?,?)");
+  let kevNew = 0;
+  for (const k of kev) {
+    const ransom = /known/i.test(k.knownRansomwareCampaignUse || "") ? 1 : 0;
+    if (mark.run(k.dateAdded, ransom, k.requiredAction, k.cveID).changes) continue;
+    add.run(k.cveID, short(k.vulnerabilityName, 300), short(k.shortDescription, 3000), String(k.vendorProject || "").toLowerCase(), String(k.product || "").toLowerCase(), [].concat(k.cwes || []).join(", ") || null,
+      k.dateAdded, ransom, k.requiredAction, JSON.stringify([`https://nvd.nist.gov/vuln/detail/${k.cveID}`]));
+    kevNew++;
+  }
+  // How likely each is to be exploited (EPSS).
+  const csv = gunzipSync(Buffer.from(await (await fetch(EPSS_URL, { headers: { "User-Agent": UA } })).arrayBuffer())).toString("utf8");
+  const have = new Set(db.prepare("SELECT id FROM cves").all().map((r) => r.id)), score = db.prepare("UPDATE cves SET epss = ?, epss_pct = ? WHERE id = ?");
+  let scored = 0;
+  // The same list names every registered CVE, which is what the CVE map draws: one dot each, in order within its year.
+  const every = new Map();
+  for (const line of csv.split("\n")) {
+    const [id, e, p] = line.split(",");
+    if (!/^CVE-\d{4}-\d+$/.test(id)) continue;
+    every.set(id, Number(e));
+    if (have.has(id)) { score.run(Number(e), Number(p), id); scored++; }
+  }
+  for (const id of have) if (!every.has(id)) every.set(id, null);
+  // Each goes into a band of its year: exploited, has a ready check, likely (10%+), possible (1 to 10%), unlikely.
+  const state = new Map(db.prepare("SELECT id, kev, (template IS NOT NULL) AS chk FROM cves").all().map((r) => [r.id, r.kev ? 0 : r.chk ? 1 : -1]));
+  const groups = new Map();
+  for (const [id, e] of every) {
+    const s = state.get(id), band = s === 0 || s === 1 ? s : e >= 0.1 ? 2 : e >= 0.01 ? 3 : 4, key = id.split("-")[1] + "|" + band;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push([id, e]);
+  }
+  const put = db.prepare("INSERT INTO cve_map (id, year, band, pos, epss) VALUES (?,?,?,?,?)");
+  db.exec("DROP TABLE IF EXISTS cve_all; DELETE FROM cve_map;");
+  for (const [key, list] of groups) { const [year, band] = key.split("|").map(Number); list.sort((x, y) => (y[1] || 0) - (x[1] || 0) || (x[0] < y[0] ? -1 : 1)).forEach(([id, e], pos) => put.run(id, year, band, pos, e)); }
+  db.exec("COMMIT; INSERT INTO cves_fts(cves_fts) VALUES ('rebuild');");
+  console.log(`${every.size} registered CVE ids placed on the map.`);
+  setMeta("cves_at", new Date().toISOString());
+  console.log(`Done. ${n} CVEs with a check (${bad} templates could not be read), ${kev.length} known to be exploited (${kevNew} of them without a check), ${scored} scored for likelihood.`);
+}
+
 function status() {
   const r = db.prepare("SELECT COUNT(*) n, SUM(body IS NOT NULL) withBody, COUNT(DISTINCT weakness) weaknesses, COUNT(DISTINCT program) programs FROM reports").get();
   console.log(r, db.prepare("SELECT k,v FROM meta").all());
@@ -243,5 +411,8 @@ else if (cmd === "details") await details();
 else if (cmd === "seed") await seed(process.argv[3]);
 else if (cmd === "import") await importCsv(process.argv[3]);
 else if (cmd === "logos") await logos();
+else if (cmd === "index") buildIndex();
+else if (cmd === "payloads") importPayloads(process.argv[3]);
+else if (cmd === "cves") await importCves(process.argv[3]);
 else if (cmd === "status") status();
-else console.log("Usage: node scripts/ingest.mjs <import|list|details|logos|seed <file>|status> [--max N]");
+else console.log("Usage: node scripts/ingest.mjs <import|list|details|logos|index|payloads|cves|seed <file>|status> [--max N]");

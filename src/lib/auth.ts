@@ -13,8 +13,8 @@ const token = (bytes = 32) => randomBytes(bytes).toString("base64url");
 const same = (a: string, b: string) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 
 export const googleReady = () => !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-/** Sign-in stays "coming soon" until the owner switches it on, even when the Google details are in place. */
-export const signInLive = () => googleReady() && process.env.HEXBRAIN_SIGNIN === "on";
+/** Sign-in is open as soon as the Google details are in place. */
+export const signInLive = googleReady;
 /** Whether the API needs a key. The owner can leave it open with HEXBRAIN_OPEN_API=true. */
 // On the live site it always needs one, so nothing is open by accident; on a developer's machine it is open until keys are set up.
 export const keysRequired = () => process.env.HEXBRAIN_OPEN_API !== "true" && (process.env.NODE_ENV === "production" || googleReady() || !!process.env.HEXBRAIN_API_KEY);
@@ -53,6 +53,10 @@ export async function endSession() {
   jar.delete(SESSION_COOKIE);
 }
 
+export function keyTotals(userId: number): { requests: number; lastUsed: string | null } {
+  const r = db().prepare("SELECT COALESCE(SUM(requests), 0) n, MAX(last_used_at) t FROM api_keys WHERE user_id = ?").get(userId) as { n: number; t: string | null };
+  return { requests: r.n, lastUsed: r.t };
+}
 export function listKeys(userId: number): ApiKey[] {
   return db().prepare("SELECT id, name, prefix, created_at, last_used_at, requests FROM api_keys WHERE user_id = ? AND revoked_at IS NULL ORDER BY id DESC").all(userId).map((r) => ({ ...r })) as unknown as ApiKey[]; // plain copies, so they can be handed to the page
 }

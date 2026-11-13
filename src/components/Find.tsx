@@ -67,13 +67,13 @@ export default function Find({ model, onPick, onClose }: { model: Model; onPick:
           )}
           {places.length > 0 && <h3>On the map</h3>}
           {places.map((p, i) => (
-            <button key={p.kind + p.title} data-i={i} className={`${s.item} ${i === active ? s.on : ""}`} onMouseEnter={() => setAt(i)} onClick={() => open(i)}>
+            <button key={p.kind + p.title} data-i={i} className={`${s.item} ${i === active ? s.on : ""}`} onMouseMove={() => { if (i !== active) setAt(i); }} onClick={() => open(i)}>
               <span><i>{p.kind}</i>{p.title}</span><small>{p.meta}</small>
             </button>
           ))}
           {ready && found?.q === q && <h3>{found.total ? `${plural(found.total, "report")}${found.total > rows.length ? `, best ${rows.length} shown` : ""}` : "Reports"}</h3>}
           {rows.map((r, n) => { const i = places.length + n; return (
-            <a key={r.id} data-i={i} className={`${s.item} ${i === active ? s.on : ""}`} href={`/report/${r.id}`} target="_blank" rel="noreferrer" onMouseEnter={() => setAt(i)}>
+            <a key={r.id} data-i={i} className={`${s.item} ${i === active ? s.on : ""}`} href={`/report/${r.id}`} target="_blank" rel="noreferrer" onMouseMove={() => { if (i !== active) setAt(i); }}>
               <span>{r.title}</span><small>{meta(r)}</small>
             </a>
           ); })}

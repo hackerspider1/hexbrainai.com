@@ -25,3 +25,12 @@
 .facts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0 0 8px; font-variation-settings: "MONO" .5; }
 .facts div { display: flex; flex-direction: column-reverse; }
 .facts b { font-weight: 400; font-size: 1.25rem; } .facts span { font-size: .75rem; color: var(--dim); }
+.cards { list-style: none; padding: 0 !important; display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 0 32px; margin: 28px 0 !important; }
+.cards li { display: flex; flex-direction: column; gap: 3px; padding: 16px 0; border-top: 1px solid var(--line); max-width: none !important; }
+.cards li > a { font-size: 1.125rem; text-decoration: none !important; }
+.cards small { color: var(--hot); font-size: .8125rem; font-variation-settings: "MONO" .5; }
+.cards span { color: var(--dim); font-size: .875rem; line-height: 1.4; }
+.fold { border-top: 1px solid var(--line); padding: 4px 0; }
+.fold summary { cursor: pointer; padding: 10px 0; font-size: 1.0625rem; }
+.fold summary:hover { color: var(--hot); }
+.fold[open] summary { color: var(--hot); }

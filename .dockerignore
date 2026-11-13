@@ -3,3 +3,4 @@ node_modules
 .git
 data/*.db*
 .env*.local
+data/sources

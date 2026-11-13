@@ -13,7 +13,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), ".."), BASE = "http:/
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [], check = (name, ok, detail = "") => results.push({ name, ok: !!ok, detail: String(detail).slice(0, 240) });
 const server = spawn("pnpm", ["exec", "next", "dev", "--port", "3211"], { cwd: root, stdio: "ignore", detached: true,
-  env: { ...process.env, GOOGLE_CLIENT_ID: "test-client.apps.example", GOOGLE_CLIENT_SECRET: "test-secret", HEXBRAIN_SIGNIN: "on", HEXBRAIN_PUBLIC_URL: BASE, NEXT_DIST_DIR: ".next-auth-test", HEXBRAIN_OPEN_API: "", HEXBRAIN_API_KEY: "" } });
+  env: { ...process.env, GOOGLE_CLIENT_ID: "test-client.apps.example", GOOGLE_CLIENT_SECRET: "test-secret", HEXBRAIN_PUBLIC_URL: BASE, NEXT_DIST_DIR: ".next-auth-test", HEXBRAIN_OPEN_API: "", HEXBRAIN_API_KEY: "" } });
 const chrome = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", ["--headless=new", `--remote-debugging-port=${PORT}`,
   `--user-data-dir=${mkdtempSync(join(tmpdir(), "vg-auth-"))}`, "--no-first-run", "--no-default-browser-check", "--window-size=1200,900", "about:blank"], { stdio: "ignore" });
 const db = new DatabaseSync(join(root, "data", "hexbrain.db"));
@@ -69,7 +69,7 @@ try {
   r = await get("/api/v1/list_classes", { authorization: "Bearer " + key });
   check("API: works with the new key", r.status === 200 && (await r.json()).classes?.length > 5);
   r = await fetch(BASE + "/api/mcp", { method: "POST", headers: { "Content-Type": "application/json", authorization: "Bearer " + key }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
-  check("API (MCP): works with the new key", r.status === 200 && (await r.json()).result?.tools?.length === 5);
+  check("API (MCP): works with the new key", r.status === 200 && (await r.json()).result?.tools?.length === 10);
   await go("/account");
   check("account page: counts the key's requests", /2 requests/.test(await ev("document.querySelector('main').innerText")));
   await go("/");

@@ -1,6 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Graph, Leaf } from "@/lib/db";
 import { SEVERITIES } from "@/lib/taxonomy";
@@ -18,7 +19,7 @@ type Listing = { key: string; total: number; rows: Row[] };
 
 function syncUrl(f: Focus, lens: Lens) {
   const q = new URLSearchParams();
-  if (lens === "programs") q.set("view", "programs");
+  if (lens !== "classes") q.set("view", lens);
   if (f.prog) q.set("program", f.prog.name);
   if (f.cls) q.set("class", f.cls.id);
   if (f.weak) q.set("weakness", f.weak.name);
@@ -27,8 +28,8 @@ function syncUrl(f: Focus, lens: Lens) {
 
 export type Viewer = { name: string | null; picture: string | null } | null;
 
-// `viewer` is the signed-in person, if any. Connecting an AI is offered only to them. `signIn` says whether sign-in is open yet.
-export default function MapView({ graph, viewer = null, needsKey = false, signIn = false }: { graph: Graph; viewer?: Viewer; needsKey?: boolean; signIn?: boolean }) {
+// `viewer` is the signed-in person, if any. Connecting an AI is offered only to them.
+export default function MapView({ graph, viewer = null, needsKey = false }: { graph: Graph; viewer?: Viewer; needsKey?: boolean }) {
   const model = useMemo(() => build(graph), [graph]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -58,13 +59,16 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
 
   // What is open. A program can be open in either view: as a bubble in Programs, or as its footprint on the dial.
   const show = useCallback((n: Node | null, view?: Lens) => {
+    if (n?.k === "ring") return; // ids on the ring open their own page instead
     const f: Focus = !n ? NONE
       : n.k === "cls" ? { ...NONE, cls: n }
       : n.k === "weak" ? { ...NONE, cls: n.cls, weak: n }
       : n.k === "leaf" ? { ...NONE, cls: n.w.cls, weak: n.w, leaf: n }
       : { ...NONE, prog: n };
     if (f.weak !== focusRef.current.weak) { colPageRef.current = 0; setColPageState(0); }
-    const l: Lens = view ?? (n && n.k !== "prog" ? "classes" : lensRef.current);
+    // Each kind of thing lives in its own view; a program can also be shown on the vulnerability dial.
+    const home = !n || n.k === "prog" ? null : n.k === "cls" ? n : n.k === "weak" ? n.cls : n.w.cls;
+    const l: Lens = view ?? (!n ? lensRef.current : home ? (home.dial === "c" ? "cves" : "classes") : lensRef.current === "cves" ? "programs" : lensRef.current);
     lensRef.current = l; setLensState(l);
     focusRef.current = f; setFocusState(f); setIndex(null);
     syncUrl(f, l);
@@ -81,7 +85,8 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
     if (w.loaded || w.loading) return;
     w.loading = true;
     try {
-      const rows: Leaf[] = await (await fetch(`/api/leaves?weakness=${encodeURIComponent(w.name)}`)).json();
+      const cve = w.cls.dial === "c"; // on the CVE dial a strip is one band of one year
+      const rows: Leaf[] = await (await fetch(cve ? `/api/cve-band?year=${w.cls.id}&band=${w.band}` : `/api/leaves?weakness=${encodeURIComponent(w.name)}`)).json();
       ensureDisc(rows.length);
       w.leaves = rows.map((d, i) => ({ k: "leaf", d, i, w }));
       if (rows.length === w.n) w.sev = rows.map((d) => d[2]).join(""); // same reports, fresher severities
@@ -94,7 +99,7 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
     (async () => {
       if (focus.weak) await loadLeaves(focus.weak);
       // Then the rest of the open class, so its other weaknesses open instantly.
-      if (focus.cls) for (const w of focus.cls.weaks) { if (!live) return; await loadLeaves(w); }
+      if (focus.cls?.dial === "v") for (const w of focus.cls.weaks) { if (!live) return; await loadLeaves(w); }
     })();
     return () => { live = false; };
   }, [focus.cls, focus.weak, loadLeaves]);
@@ -116,7 +121,7 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
   }, [focus.prog, lens, model]);
 
   // Reports for the weakness or program that is open.
-  const filter = focus.weak ? `weakness=${encodeURIComponent(focus.weak.name)}` : focus.prog ? `program=${encodeURIComponent(focus.prog.name)}` : "";
+  const filter = focus.weak && focus.weak.cls.dial === "v" ? `weakness=${encodeURIComponent(focus.weak.name)}` : focus.prog ? `program=${encodeURIComponent(focus.prog.name)}` : "";
   const listKey = filter ? `${filter}&sort=${sort}` : "";
   useEffect(() => {
     if (!listKey) return;
@@ -144,17 +149,19 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
 
   // The map itself.
   useEffect(() => {
-    const stop = startMap(canvasRef.current!, svgRef.current!, model, { focus: focusRef, lens: lensRef, colPage: colPageRef, dataVer, footprint }, { setFocus, stepOut });
+    const stop = startMap(canvasRef.current!, svgRef.current!, model, { focus: focusRef, lens: lensRef, colPage: colPageRef, dataVer, footprint }, { setFocus, stepOut, open: (path) => window.open(path, "_blank", "noopener") });
     // Restore what the link points at, once the first frame is out of the way.
-    const q = new URLSearchParams(window.location.search), c = model.classes.find((x) => x.id === q.get("class"));
+    const q = new URLSearchParams(window.location.search), asked = q.get("view"), view: Lens | undefined = asked === "programs" || asked === "cves" ? asked : undefined;
+    const c = (view === "cves" ? model.cve.classes : model.classes).find((x) => x.id === q.get("class"));
     const wk = c?.weaks.find((x) => x.name === q.get("weakness")), pr = model.progs.find((x) => x.name === q.get("program"));
-    const view: Lens | undefined = q.get("view") === "programs" ? "programs" : undefined, start = wk || c || pr || null;
+    const start = wk || c || pr || null;
     if (view || start) queueMicrotask(() => show(start, start && start.k !== "prog" ? undefined : view));
     return stop;
   }, [model, setFocus, stepOut, show]);
 
   const { cls, weak, leaf, prog } = focus;
   const active = !!(cls || prog);
+  const onCves = lens === "cves";
   const biggest = useMemo(() => [...model.classes].sort((a, b) => b.count - a.count)[0], [model]);
   const classById = useMemo(() => Object.fromEntries(model.classes.map((c) => [c.id, c])), [model]);
   const rowMeta = (r: Row, withProgram = true) =>
@@ -189,22 +196,23 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
             <span className={s.lens} role="group" aria-label="What the map is organised by">
               <button aria-pressed={lens === "classes"} onClick={() => setLens("classes")}>Vulnerabilities</button>
               <button aria-pressed={lens === "programs"} onClick={() => setLens("programs")}>Programs</button>
+              <button aria-pressed={lens === "cves"} onClick={() => setLens("cves")}>CVEs</button>
             </span>
           )}
-          {active && <><button onClick={() => setFocus(null)}>{lens === "programs" ? "Programs" : "Map"}</button><i>/</i></>}
+          {active && <><button onClick={() => setFocus(null)}>{lens === "programs" ? "Programs" : lens === "cves" ? "CVEs" : "Map"}</button><i>/</i></>}
           {prog && <b>{prog.name}</b>}
           {cls && (weak ? <button onClick={() => setFocus(cls)}>{cls.name}</button> : <b>{cls.name}</b>)}
           {weak && (<><i>/</i>{leaf ? <button onClick={() => setFocus(weak)}>{weak.tag}</button> : <b>{weak.tag}</b>}</>)}
-          {leaf && (<><i>/</i><b>#{leaf.d[0]}</b></>)}
+          {leaf && (<><i>/</i><b>{typeof leaf.d[0] === "number" ? "#" : ""}{leaf.d[0]}</b></>)}
         </nav>
         <div className={s.brand}><Mark size={24} />{SITE.name}</div>
         <div className={s.keys}>
           {(active || index) && <button className={s.key} onClick={() => (index ? setIndex(null) : stepOut())}>Back <kbd>Esc</kbd></button>}
           <button className={s.key} onClick={() => setFinding(true)}>Find <kbd>F</kbd></button>
           {viewer && <button className={`${s.key} ${s.primary}`} onClick={openConnect}>Connect AI <kbd>C</kbd></button>}
-          <a className={`${s.key} ${s.acct}`} href="/account" aria-label={viewer ? "Your account" : signIn ? "Sign in" : "Sign in, coming soon"}>
+          <a className={`${s.key} ${s.acct}`} href="/account" aria-label={viewer ? "Your account" : "Sign in"}>
             {viewer ? (viewer.picture ? <img src={viewer.picture} alt="" width={22} height={22} referrerPolicy="no-referrer" /> : (viewer.name || "Account").split(" ")[0])
-              : <>Sign in{!signIn && <em>Soon</em>}</>}
+              : "Sign in"}
           </a>
         </div>
       </header>
@@ -218,11 +226,16 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
         <section className={`${s.hero} ${active ? s.gone : ""}`} aria-hidden={active}>
           <h1>Every disclosed bug, mapped to how it was found.</h1>
           <p>{num(graph.total)} public HackerOne reports across {num(graph.programs)} programs. Open a class, pick a weakness, and read how each bug was found.</p>
-          <p>
+          <p className={s.act}>
             <button className={s.link} tabIndex={active ? -1 : 0} onClick={() => setFocus(biggest)}>Explore the map</button> or{" "}
-            <button className={s.link} tabIndex={active ? -1 : 0} onClick={() => setFinding(true)}>search the reports.</button>{" "}
-            <a className={s.about} tabIndex={active ? -1 : 0} href="/browse">Browse as a list</a>
-            <a className={s.about} tabIndex={active ? -1 : 0} href="/about">About</a>
+            <button className={s.link} tabIndex={active ? -1 : 0} onClick={() => setFinding(true)}>search the reports.</button>
+          </p>
+          <p className={s.links}>
+            <Link tabIndex={active ? -1 : 0} href="/browse">Browse</Link>
+            <Link tabIndex={active ? -1 : 0} href="/bypasses">Bypasses</Link>
+            <Link tabIndex={active ? -1 : 0} href="/payloads">Payloads</Link>
+            <Link tabIndex={active ? -1 : 0} href="/cves">CVEs</Link>
+            <Link tabIndex={active ? -1 : 0} href="/about">About</Link>
           </p>
         </section>
       )}
@@ -232,7 +245,9 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
         <button className={s.stat} onClick={() => { setIndexFilter(""); setIndex("weaknesses"); }}><b>{num(graph.weaknessCount)}</b><span>weaknesses</span></button>
         <button className={s.stat} onClick={() => { setIndexFilter(""); setIndex("programs"); }}><b>{num(graph.programs)}</b><span>programs</span></button>
         <div className={s.stat}><b>{money(graph.totalBounty) || "–"}</b><span>in bounties</span></div>
-        <p>{lens === "programs"
+        <p>{lens === "cves"
+          ? "Each node is a year. Its strips sort that year's CVEs: red are exploited in the wild, bright have a ready check, then likely, possible and unlikely."
+          : lens === "programs"
           ? "Each strip is a program and each line in it a row of its reports. The biggest is at the top, smaller ones run down both sides."
           : "Each strip is a weakness and each line in it a row of reports. Lines through the middle join classes that turn up in the same reports."}</p>
       </div>
@@ -262,6 +277,48 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
             </div>
           ))}
         </>)}
+        {onCves && cls && !weak && (<>
+          <p className={s.tag}>CVEs registered in</p>
+          <h2>{cls.name}</h2>
+          <p className={s.figure}>{plural(cls.count, "CVE")}{cls.weaks[0]?.band === 0 ? ` · ${num(cls.weaks[0].count)} exploited in the wild` : ""}</p>
+          <h3>How this year&apos;s CVEs sort</h3>
+          {cls.weaks.map((w) => (
+            <button key={w.name} className={s.row} onClick={() => setFocus(w)}><span>{w.name}</span><small>{num(w.count)}</small></button>
+          ))}
+          <p className={s.note}>Likelihood is the chance of exploitation in the next 30 days. Open a strip to see the CVEs in it.</p>
+        </>)}
+        {onCves && cls && weak && !leaf && (<>
+          <p className={s.tag}>{cls.name} · {weak.tag}</p>
+          <h2>{weak.name}</h2>
+          <p className={s.figure}>{plural(weak.count, "CVE")} registered in {cls.name}</p>
+          {!weak.flat && (() => {
+            const per = namesPerPage(typeof window === "undefined" ? 900 : window.innerHeight), pages = Math.max(1, Math.ceil(weak.n / per));
+            const page = Math.min(colPage, pages - 1);
+            return pages > 1 ? (
+              <div className={s.pager}><div>
+                <button disabled={page === 0} onClick={() => setColPage(page - 1)}>Previous names</button>
+                <button disabled={page >= pages - 1} onClick={() => setColPage(page + 1)}>Next names</button>
+              </div></div>
+            ) : null;
+          })()}
+          {weak.flat && <p className={s.note}>This strip is too large to open out on the map. The most likely to be exploited are listed here.</p>}
+          {!weak.loaded ? <p className={s.note}>Loading…</p> : weak.leaves.slice(0, 80).map((l) => (
+            <a key={String(l.d[0])} className={s.report} href={`/cve/${l.d[0]}`} target="_blank" rel="noreferrer">
+              <span>{l.d[0]}{l.d[1] ? ` · ${l.d[1]}` : ""}</span><small>{l.d[4]}% likely to be exploited</small>
+            </a>
+          ))}
+          {weak.loaded && weak.count > 80 && <p className={s.note}>Showing the 80 most likely of {num(weak.count)}.</p>}
+        </>)}
+        {onCves && cls && weak && leaf && (<>
+          <p className={s.tag}>{leaf.d[0]}</p>
+          <h2 className={s.small}>{leaf.d[1] || "A registered CVE"}</h2>
+          <p className={s.figure}>{weak.name} · {leaf.d[4]}% likely to be exploited</p>
+          <p className={s.lead}>{weak.band <= 1 && leaf.d[1] ? "Its page shows the request that confirms it, where we hold a ready check." : "We hold no ready check for this one. Its page links to the full record."}</p>
+          <p className={s.actions}>
+            <a href={`/cve/${leaf.d[0]}`} target="_blank" rel="noreferrer">Open this CVE</a>
+            <a href={`https://nvd.nist.gov/vuln/detail/${leaf.d[0]}`} target="_blank" rel="noreferrer">National Vulnerability Database</a>
+          </p>
+        </>)}
         {prog && (<>
           <p className={s.tag}>{prog.tag} · program</p>
           <h2 className={s.withLogo}>{prog.logo && <img src={prog.logo} alt="" width={40} height={40} />}{prog.name}</h2>
@@ -276,7 +333,7 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
           <h3>Reports</h3>
           {reports(false)}
         </>)}
-        {cls && !weak && (<>
+        {!onCves && cls && !weak && (<>
           <p className={s.tag}>{cls.tag} · vulnerability class</p>
           <h2>{cls.name}</h2>
           <p className={s.figure}>{plural(cls.count, "disclosed report")}{cls.bounty ? ` · ${money(cls.bounty)} paid` : ""}</p>
@@ -289,7 +346,7 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
             <button key={o.id} className={s.row} onClick={() => setFocus(o)}><span>{o.name}</span><small>{plural(n, "report")}</small></button>
           ))}
         </>)}
-        {cls && weak && !leaf && (<>
+        {!onCves && cls && weak && !leaf && (<>
           <p className={s.tag}>{weak.tag} · weakness in {cls.name}</p>
           <h2>{weak.name}</h2>
           <p className={s.figure}>{plural(weak.count, "disclosed report")}{weak.bounty ? ` · ${money(weak.bounty)} paid` : ""}</p>
@@ -310,7 +367,7 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
           })()}
           {reports(true)}
         </>)}
-        {cls && weak && leaf && (<>
+        {!onCves && cls && weak && leaf && (<>
           <p className={s.tag}>Report #{leaf.d[0]}{leaf.d[5] ? ` · ${leaf.d[5]}` : ""}</p>
           <h2 className={s.small}>{leaf.d[1]}</h2>
           <p className={s.figure}>{[leaf.d[2] ? SEVERITIES[leaf.d[2]] + " severity" : null, money(leaf.d[3]) && money(leaf.d[3]) + " bounty", leaf.d[4] ? leaf.d[4] + " votes" : null].filter(Boolean).join(" · ") || "No severity or bounty listed"}</p>
@@ -341,6 +398,10 @@ export default function MapView({ graph, viewer = null, needsKey = false, signIn
             {needsKey && <p className={s.note}>The API needs a key. <a className={s.inline} href="/account">Create one on your account page</a>, then put it in place of YOUR_KEY.</p>}
             <dl className={s.tools}>
               <div><dt>get_program_history</dt><dd>What has been found on a program, what it paid, and what is rarely reported there</dd></div>
+              <div><dt>plan_tests</dt><dd>Describe a feature and get the bug classes real reports found in features like it</dd></div>
+              <div><dt>find_cves</dt><dd>Known CVEs for the technologies a target runs, with the request that confirms each</dd></div>
+              <div><dt>find_bypasses</dt><dd>How researchers got past a WAF, filter, 2FA or an earlier fix, with payloads</dd></div>
+              <div><dt>find_payloads</dt><dd>Payloads and techniques for 60+ bug classes, with filter-bypass variants</dd></div>
               <div><dt>get_testing_playbook</dt><dd>How a bug class was found before, with real steps and requests</dd></div>
               <div><dt>search_reports</dt><dd>Full-text search across titles and write-ups</dd></div>
               <div><dt>get_report</dt><dd>One report in full</dd></div>

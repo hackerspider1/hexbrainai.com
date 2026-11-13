@@ -2,6 +2,10 @@
 //   pnpm dev --port 3210   (in another terminal)
 //   node tests/e2e.mjs [screenshot folder]
 import { spawn } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +14,11 @@ const BASE = process.env.BASE || "http://localhost:3210";
 const OUT = process.argv[2] || mkdtempSync(join(tmpdir(), "vg-shots-"));
 mkdirSync(OUT, { recursive: true });
 const PORT = 9347;
+// A throwaway account with one API key, so the AI checks work whether or not this copy of the app requires keys.
+const db = new DatabaseSync(join(dirname(fileURLToPath(import.meta.url)), "..", "data", "hexbrain.db"));
+db.exec("PRAGMA busy_timeout = 4000;");
+const testKey = "sk_" + randomBytes(30).toString("base64url"), testSub = "e2e-" + randomBytes(6).toString("hex");
+let testUser = 0;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const chrome = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", [
   "--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), "vg-"))}`,
@@ -29,11 +38,13 @@ const key = async (k, code = k) => { await send("Input.dispatchKeyEvent", { type
 const type = async (t) => { await send("Input.insertText", { text: t }); await sleep(900); };
 const shot = async (name) => { const r = await send("Page.captureScreenshot", { format: "png" }); writeFileSync(join(OUT, name + ".png"), Buffer.from(r.result.data, "base64")); };
 const at = (kind, ...args) => ev(`window.__vg.${kind}(${args.map((a) => JSON.stringify(a)).join(",")})`); // where a part of the map is on screen
-const labels = () => ev(`[...document.querySelectorAll('svg text')].filter(t => +t.getAttribute('opacity') > 0.05).map(t => ({t: t.textContent, x: +t.getAttribute('x'), y: +t.getAttribute('y'), a: t.getAttribute('text-anchor'), fill: t.getAttribute('fill'), px: +t.getAttribute('font-size'), w: t.getComputedTextLength()}))`);
+// Text set along the ring is turned, so it is checked separately from the upright labels.
+const ringText = () => ev(`[...document.querySelectorAll('svg text')].filter(t => +t.getAttribute('opacity') > 0.05 && t.hasAttribute('transform')).map(t => ({t: t.textContent, fill: t.getAttribute('fill')}))`);
+const labels = () => ev(`[...document.querySelectorAll('svg text')].filter(t => +t.getAttribute('opacity') > 0.05 && !t.hasAttribute('transform')).map(t => ({t: t.textContent, x: +t.getAttribute('x'), y: +t.getAttribute('y'), a: t.getAttribute('text-anchor'), fill: t.getAttribute('fill'), px: +t.getAttribute('font-size'), w: t.getComputedTextLength()}))`);
 const hot = (l) => l.fill.includes("255,106,61");
 const box = (l) => { const x0 = l.a === "middle" ? l.x - l.w / 2 : l.a === "end" ? l.x - l.w : l.x; return [x0, l.y - l.px * 0.8, x0 + l.w, l.y + 2]; };
 let pairs = [];
-const overlaps = (list) => { pairs = []; for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) { const a = box(list[i]), b = box(list[j]); if (a[0] < b[2] - 2 && a[2] > b[0] + 2 && a[1] < b[3] - 1.5 && a[3] > b[1] + 1.5) pairs.push(`"${list[i].t}" x "${list[j].t}"`); } return pairs.length; };
+const overlaps = (all) => { pairs = []; const list = all.filter((l) => !/^x -?\d+ y -?\d+$/.test(l.t)); /* the cursor's coordinate readout is not a label */ for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) { const a = box(list[i]), b = box(list[j]); if (a[0] < b[2] - 2 && a[2] > b[0] + 2 && a[1] < b[3] - 1.5 && a[3] > b[1] + 1.5) pairs.push(`"${list[i].t}" x "${list[j].t}"`); } return pairs.length; };
 const search = () => ev("decodeURIComponent(location.search.replace(/\\+/g, ' '))");
 const crumbs = () => ev("document.querySelector('nav')?.innerText.replace(/\\s+/g,' ').trim()");
 const panel = () => ev("(() => { const a = document.querySelector('aside'); return a && a.getAttribute('aria-hidden') === 'false' ? a.innerText.replace(/\\s+/g,' ').slice(0, 320) : null; })()");
@@ -95,7 +106,7 @@ try {
   // 3. Hovering and opening a weakness
   p = await at("weak", STORED);
   await hover(p[0], p[1]);
-  check("hover strip: its name highlights", (await ev("window.__vg.state().hover")) === "w" + STORED && (await labels()).some((l) => l.t === STORED));
+  check("hover strip: its name highlights", (await ev("window.__vg.state().hover")) === "wXSS" + STORED && (await labels()).some((l) => l.t === STORED));
   await click(p[0], p[1]); await settle(1500);
   check("click strip: opens the weakness", (await search()).includes("weakness=" + STORED), await search());
   L = await labels();
@@ -185,6 +196,57 @@ try {
   check("side arcs: clicking a logo marks that program on the dial", (await search()) === "?program=" + pickO[0] && (await labels()).some((l) => l.t.endsWith("from " + pickO[0].slice(0, 19)) || /from /.test(l.t)), await search());
   await key("Escape"); await settle(500);
 
+  // 6c. The ring of exploited CVEs round the dial
+  let rg = await at("ring");
+  check("CVE ring: exploited CVE ids circle the dial", rg.length >= 20 && (await ringText()).filter((l) => /^CVE-\d{4}-\d+$/.test(l.t)).length >= 20, rg.length + " ids");
+  await sleep(1500);
+  const rg2 = await at("ring");
+  check("CVE ring: it turns", Math.hypot(rg2[0][1] - rg[0][1], rg2[0][2] - rg[0][2]) > 0.3);
+  await hover(rg2[3][1], rg2[3][2]);
+  const stay = (await at("ring"))[3]; await sleep(600); const stay2 = (await at("ring"))[3];
+  check("CVE ring: pauses under the cursor, names the CVE and turns it red", Math.hypot(stay2[1] - stay[1], stay2[2] - stay[2]) < 0.2 && (await ringText()).some((l) => l.t === stay[0] && l.fill.includes("255,59,48")) && (await labels()).some((l) => /Exploited in the wild/.test(l.t)));
+  await hover(700, 450);
+
+  // 6d. The CVEs view: every registered CVE
+  await clickText("nav button", "CVEs"); await settle(900);
+  check("CVEs view: opens from the switch", (await search()) === "?view=cves", await search());
+  L = await labels();
+  check("CVEs view: counts every registered CVE and the exploited ones", L.some((l) => l.t === "registered CVEs") && L.some((l) => /^[\d,]+ exploited in the wild$/.test(l.t) && hot(l) === false && l.fill.includes("255,59,48")) && L.some((l) => /^\d{3},\d{3}$/.test(l.t)));
+  check("CVEs view: every year is a node with its name", L.filter((l) => /^(19|20)\d\d$/.test(l.t)).length >= 20, L.filter((l) => /^(19|20)\d\d$/.test(l.t)).length + " years");
+  check("CVEs view: no overlapping labels", overlaps(L) === 0, pairs.join(" ; "));
+  speed.cves = await fps();
+  await shot("5b-cves");
+  p = await at("cls", "2021");
+  await hover(p[0], p[1]);
+  check("CVEs view: hovering a year node highlights it", (await labels()).some((l) => l.t === "2021" && hot(l)));
+  await click(p[0], p[1]); await settle(800);
+  check("CVEs view: clicking a year turns the dial to it and fans out its strips", (await search()) === "?view=cves&class=2021" && /How this year.s CVEs sort/.test(await panel() || "") && (await at("weakOf", "2021", "Exploited in the wild"))[0] < (await at("cls", "2021"))[0], await search());
+  L = await labels();
+  check("CVEs view: the year's five strips are named beside it", L.filter((l) => /^Band \d /.test(l.t)).length === 5 && L.some((l) => l.t === "Exploited in the wild"), L.filter((l) => /^Band/.test(l.t)).length + " strips");
+  check("CVEs view: no overlapping labels in a year", overlaps(L) === 0, pairs.join(" ; "));
+  await shot("5c-cve-year");
+  p = await at("weakOf", "2021", "Exploited in the wild");
+  await click(p[0], p[1]); await settle(1800);
+  check("CVEs view: opening a strip regroups its CVEs into a disc", (await search()) === "?view=cves&class=2021&weakness=Exploited in the wild" && /216 CVEs registered in 2021/.test(await panel() || ""), await search());
+  L = await labels();
+  const cveCols = L.filter((l) => /^CVE-2021-\d+ /.test(l.t));
+  check("CVEs view: CVEs are named in two columns beside the disc", cveCols.length >= 16 && new Set(cveCols.map((l) => l.a)).size === 2, cveCols.length + " names");
+  check("CVEs view: the panel lists them with a link to each", (await ev("document.querySelectorAll('aside a[href^=\"/cve/CVE-2021-\"]').length")) >= 40);
+  speed.cveBand = await fps();
+  await shot("5d-cve-band");
+  const c1 = cveCols[0];
+  await click(c1.a === "end" ? c1.x - 30 : c1.x + 30, c1.y + 13); await sleep(700);
+  check("CVEs view: clicking a CVE's name opens its card", /Open this CVE/.test(await panel() || ""), await panel());
+  const cveHref = await ev("document.querySelector('aside a[href^=\"/cve/\"]')?.getAttribute('href')");
+  check("CVEs view: the card links to a page that exists", cveHref && (await fetch(BASE + cveHref)).status === 200, cveHref);
+  await key("Escape"); await sleep(300); await key("Escape"); await settle(700);
+  p = await at("weakOf", "2021", "Unlikely (under 1%)");
+  await click(p[0], p[1]); await settle(900);
+  check("CVEs view: a strip too large for a disc stays in place and lists its CVEs", /too large to open out/.test(await panel() || "") && (await ev("document.querySelectorAll('aside a[href^=\"/cve/\"]').length")) >= 40, (await panel() || "").slice(0, 160));
+  await key("Escape"); await sleep(300); await key("Escape"); await settle(600);
+  check("CVEs view: Esc steps back out to all years", (await search()) === "?view=cves");
+  await clickText("nav button", "Vulnerabilities"); await settle(700);
+
   // 7. Full lists behind the counters
   await clickText("button", "programs"); await sleep(600);
   check("programs counter: lists every program", (await ev("document.querySelectorAll('aside button').length")) === total, `${await ev("document.querySelectorAll('aside button').length")} rows for ${total}`);
@@ -211,25 +273,27 @@ try {
   await key("f", "KeyF"); await type("ssrf");
   check("Find: offers places on the map as well as reports", /Class/.test(await ev("document.querySelector('[role=dialog] button[data-i=\"0\"]')?.innerText") || ""));
   await key("ArrowDown"); await key("ArrowUp"); await key("Enter"); await settle(600);
-  check("Find: Enter on a class opens it on the map", (await search()) === "?class=SSRF" && !(await ev("!!document.querySelector('[role=dialog]')")), await search());
+  check("Find: Enter on a class opens it on the map", (await search()) === "?class=SSRF" && !(await ev("!!document.querySelector('[role=dialog]')")), JSON.stringify([await search(), await crumbs(), await ev("!!document.querySelector('[role=dialog]')"), await ev("document.querySelector('[role=dialog] input')?.value")]));
   await key("Escape"); await settle(500);
   // 8b. Sign-in is not open yet, and Connect AI is only for people who are signed in
   check("Connect AI: not offered to someone who is not signed in", !(await ev("[...document.querySelectorAll('header button')].some(b => /Connect AI/.test(b.textContent))")));
   await key("c", "KeyC");
   check("Connect AI: its shortcut does nothing when signed out", !(await ev("!!document.querySelector('[role=dialog]')")));
-  check("header: Sign in is marked as coming soon", /Sign in\s*Soon/.test(await ev("document.querySelector('header a[href=\"/account\"]').innerText") || ""));
-  const acct = await (await fetch(BASE + "/account")).text();
-  check("account page: says sign-in is coming soon, with no Google button", /Coming soon/.test(acct) && !/Continue with Google/.test(acct));
-  const start = await fetch(BASE + "/auth/google", { redirect: "manual" });
-  check("sign-in address: leads back to the coming-soon page, not to Google", (start.headers.get("location") || "").endsWith("/account"), start.headers.get("location"));
+  check("header: offers Sign in", /^Sign in$/.test((await ev("document.querySelector('header a[href=\"/account\"]').innerText") || "").trim()));
+  const acct = await (await fetch(BASE + "/account")).text(), live = /Continue with Google/.test(acct);
+  check("account page, signed out: sign-in with what a key unlocks" + (live ? "" : " (Google not set up on this copy)"), /What a key unlocks/.test(acct) && (live || /not available/.test(acct)));
+  const start = await fetch(BASE + "/auth/google", { redirect: "manual" }), to = start.headers.get("location") || "";
+  check("sign-in address: " + (live ? "goes to Google" : "returns to the account page until Google is set up"), live ? to.startsWith("https://accounts.google.com/") : to.endsWith("/account"), to.slice(0, 80));
 
   // 9. Links
   await go("/?class=XSS&weakness=" + encodeURIComponent(STORED), 4500); await sleep(1200);
-  check("link to a weakness: opens it", /Stored/.test(await panel() || "") && (await labels()).filter((l) => /^#\d+/.test(l.t)).length >= 16);
+  check("link to a weakness: opens it", /Stored/.test(await panel() || "") && (await labels()).filter((l) => /^#\d+/.test(l.t)).length >= 16, JSON.stringify([await search(), (await panel() || "").slice(0, 60), (await labels()).length, await ev("location.href")]));
   await go("/?class=NOPE&weakness=zzz", 3500);
   check("broken link: falls back to the overview", (await panel()) === null && (await labels()).filter((l) => l.px === 12.5).length === 18);
   await go("/?view=programs", 4000);
   check("link to the Programs view: opens it", (await labels()).filter((l) => l.t.length > 2 && !/ reports?$/.test(l.t)).length >= 30);
+  await go("/?view=cves&class=2024", 4500); await sleep(800);
+  check("link to a year of CVEs: opens it", /38,503 CVEs/.test(await panel() || ""));
   await go("/?program=GitLab", 4500); await sleep(800);
   check("link to a program: shows its reports on the dial", (await labels()).some((l) => /from GitLab$/.test(l.t)) && /GitLab/.test(await panel() || ""));
 
@@ -256,14 +320,32 @@ try {
   const rpt = await get("/report/1819832");
   check("report page: its own title and description", /<title>Delete anyone[^<]* · HexBrain<\/title>/.test(rpt.text) && /name="description" content="Insecure Direct Object/.test(rpt.text));
 
+  const bp = await get("/bypasses"), bp1 = await get("/bypasses/2fa");
+  check("bypass library: lists protections and opens one", bp.status === 200 && /Web application firewalls/.test(bp.text) && bp1.status === 200 && /href="\/report\/\d+"/.test(bp1.text) && (await get("/bypasses/nope")).status === 404);
+
+  const pl = await get("/payloads"), pl1 = await get("/payloads/" + encodeURIComponent("SQL Injection"));
+  check("payloads: lists topics, opens one, and credits the source", pl.status === 200 && /XSS Injection/.test(pl.text) && pl1.status === 200 && /MIT licence/.test(pl1.text) && (await get("/payloads/nope")).status === 404);
+
+  const cv = await get("/cves"), cv1 = await get("/cve/CVE-2021-41773");
+  check("CVE library: index and a CVE page with its check", cv.status === 200 && /known to be exploited/.test(cv.text) && cv1.status === 200 && /How to confirm it/.test(cv1.text) && /Exploited in the wild/.test(cv1.text) && (await get("/cve/CVE-1999-0000")).status === 404);
+
   // 10c. What an AI assistant sees
-  const rpc = async (method, params) => (await (await fetch(BASE + "/api/mcp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })).json());
+  db.prepare("INSERT INTO users (sub, email, name, created_at) VALUES (?,?,?,?)").run(testSub, "e2e@example.com", "E2E", new Date().toISOString());
+  testUser = db.prepare("SELECT id FROM users WHERE sub = ?").get(testSub).id;
+  db.prepare("INSERT INTO api_keys (user_id, name, prefix, hash, created_at) VALUES (?,?,?,?,?)").run(testUser, "e2e", testKey.slice(0, 9), createHash("sha256").update(testKey).digest("hex"), new Date().toISOString());
+  const auth = { Authorization: "Bearer " + testKey };
+  const rpc = async (method, params) => (await (await fetch(BASE + "/api/mcp", { method: "POST", headers: { "Content-Type": "application/json", ...auth }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })).json());
   const tools = (await rpc("tools/list")).result?.tools?.map((t) => t.name) || [];
-  check("AI: five tools are offered", tools.length === 5, tools.join(","));
+  check("AI: ten tools are offered", tools.length === 10, tools.join(","));
   const calls = [["hexbrain_list_classes", {}], ["hexbrain_search_reports", { query: "oauth", limit: 2 }], ["hexbrain_get_report", { id: 1819832, max_chars: 600 }],
-    ["hexbrain_get_testing_playbook", { topic: "ssrf", limit: 2, excerpt_chars: 300 }], ["hexbrain_get_program_history", { program: "gitlab", limit: 2 }]];
+    ["hexbrain_get_testing_playbook", { topic: "ssrf", limit: 2, excerpt_chars: 300 }], ["hexbrain_get_program_history", { program: "gitlab", limit: 2 }],
+    ["hexbrain_plan_tests", { feature: "profile picture upload" }], ["hexbrain_search_reports", { query: "read other users invoices by changing id", search_writeups: true, limit: 3 }],
+    ["hexbrain_find_cves", { technologies: ["apache 2.4.49", "grafana"] }], ["hexbrain_get_cve", { id: "CVE-2021-41773" }], ["hexbrain_get_cve", { id: "CVE-1999-0001" }],
+    ["hexbrain_find_payloads", {}], ["hexbrain_find_payloads", { topic: "SSRF", need: "bypass localhost filter", limit: 2 }],
+    ["hexbrain_find_bypasses", {}], ["hexbrain_find_bypasses", { protection: "ssrf", blocked_by: "allow-list only permits internal redirect", limit: 2 }]];
   for (const [name, args] of calls) { const r = (await rpc("tools/call", { name, arguments: args })).result; check(`AI: ${name} answers`, r && r.isError === false && r.content[0].text.length > 60, JSON.stringify(r).slice(0, 160)); }
-  check("AI: the REST door and its description answer", (await get("/api/v1/list_classes")).status === 200 && /openapi/.test((await get("/api/v1/openapi.json")).text));
+  check("AI: the REST door and its description answer", (await fetch(BASE + "/api/v1/list_classes", { headers: auth })).status === 200 && /openapi/.test((await get("/api/v1/openapi.json")).text));
+  check("AI: a made-up key is refused", (await fetch(BASE + "/api/v1/list_classes", { headers: { Authorization: "Bearer sk_made-up" } })).status === 401);
 
   // 11. Phone
   await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 800, deviceScaleFactor: 2, mobile: true });
@@ -284,6 +366,7 @@ try {
   check("test run completed", false, e.stack || e);
 } finally {
   chrome.kill();
+  if (testUser) { db.prepare("DELETE FROM api_keys WHERE user_id = ?").run(testUser); db.prepare("DELETE FROM users WHERE id = ?").run(testUser); }
 }
 check("no page errors during the run", errors.length === 0, errors.slice(0, 4).join(" || "));
 for (const r of results) console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.name}${r.ok ? "" : "  -> " + r.detail}`);

@@ -20,8 +20,11 @@ All data lives in one SQLite file, `data/hexbrain.db`.
 | --- | --- |
 | `pnpm ingest:import` | Report list from the open hackerone-reports dataset. No token needed. |
 | `pnpm ingest:details --max 20000` | Full write-ups from each report's public HackerOne page. Resumable, about 50 a minute. |
+| `pnpm ingest:index` | Builds the bypass library from the stored write-ups: passages, the protections each report got past, and links to earlier reports. |
+| `pnpm ingest:payloads` | Imports the PayloadsAllTheThings reference collection (MIT licence, credited in `THIRD_PARTY.md`). |
+| `pnpm ingest:cves` | Imports CVE checks (nuclei-templates), the exploited-in-the-wild list (CISA KEV) and likelihood scores (EPSS). Run it daily to pick up new CVEs. |
 | `pnpm ingest:logos` | Program logos into `public/logos`. |
-| `pnpm ingest:refresh` | All three, in order. Run it on a schedule (for example nightly) to pick up new disclosures. |
+| `pnpm ingest:refresh` | All of the above, in order. Run it on a schedule (for example nightly) to pick up new disclosures. |
 | `pnpm ingest:status` | Counts of what is stored. |
 
 A report whose write-up is not stored yet is fetched from HackerOne the first time someone opens it.
@@ -29,13 +32,18 @@ A report whose write-up is not stored yet is fetched from HackerOne the first ti
 
 ## Connect an AI assistant
 
-Two doors onto the same five read-only tools:
+Two doors onto the same ten read-only tools:
 
 | Tool | What it answers |
 | --- | --- |
 | `hexbrain_list_classes` | Which vulnerability classes and weaknesses exist, with counts |
 | `hexbrain_search_reports` | Full-text search by words, class or weakness, program, severity, bounty |
 | `hexbrain_get_report` | One report in full, write-up included |
+| `hexbrain_plan_tests` | Describe a feature and get the bug classes real reports found in features like it, with examples |
+| `hexbrain_find_cves` | Known CVEs for the technologies a target runs: exploited or not, likelihood, version fit, and the request that confirms each |
+| `hexbrain_get_cve` | One CVE in full, with its detection check |
+| `hexbrain_find_bypasses` | How researchers got past a protection (WAF, filter, CSP, 2FA, an earlier fix), with matching passages and payloads |
+| `hexbrain_find_payloads` | Payloads and techniques for 60+ bug classes from PayloadsAllTheThings, including filter-bypass variants |
 | `hexbrain_get_testing_playbook` | How a bug class has been found before: top reports with steps, requests and common chains |
 | `hexbrain_get_program_history` | What has been reported on a program, what it paid, and what is rarely reported there |
 
@@ -78,7 +86,7 @@ People sign in with Google on `/account`, see their profile, and create up to fi
 
 To turn it on, create an OAuth client ID (type "Web application") in the [Google Cloud console](https://console.cloud.google.com/apis/credentials), add `<your address>/auth/google/callback` as an authorised redirect address, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `HEXBRAIN_PUBLIC_URL`.
 
-Sign-in shows "coming soon" until you also set `HEXBRAIN_SIGNIN=on`. Connect AI appears only for people who are signed in.
+Connect AI appears only for people who are signed in.
 
 `pnpm test:auth` checks sign-in, accounts and keys end to end, apart from the visit to Google itself.
 
@@ -90,7 +98,7 @@ Sign-in shows "coming soon" until you also set `HEXBRAIN_SIGNIN=on`. Connect AI 
 | `src/components/map/renderer.ts` | Drawing, labels, signals and pointer handling |
 | `src/components/MapView.tsx` | The page around the map: panel, search, Connect AI |
 | `src/lib/db.ts` | Database access and the map data |
-| `src/lib/ai.ts` | The five AI tools, shared by MCP and REST |
+| `src/lib/ai.ts` | The ten AI tools, shared by MCP and REST |
 | `src/lib/auth.ts` | Accounts, sessions and API keys |
 | `src/components/Find.tsx` | Search |
 | `src/lib/taxonomy.ts` | How HackerOne weaknesses group into classes |

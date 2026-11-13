@@ -1,5 +1,5 @@
 import MapView from "@/components/MapView";
-import { currentUser, keysRequired, signInLive } from "@/lib/auth";
+import { currentUser, keysRequired } from "@/lib/auth";
 import { getGraph } from "@/lib/db";
 import { SITE } from "@/lib/site";
 
@@ -11,7 +11,7 @@ export default async function Home() {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(about).replace(/</g, "\\u003c") }} />
-      <MapView graph={getGraph()} viewer={user && { name: user.name, picture: user.picture }} needsKey={keysRequired()} signIn={signInLive()} />
+      <MapView graph={getGraph()} viewer={user && { name: user.name, picture: user.picture }} needsKey={keysRequired()} />
     </>
   );
 }
