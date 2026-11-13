@@ -72,10 +72,10 @@ function classifyUntyped(d: DatabaseSync) {
   catch { d.exec("ROLLBACK"); } // for example the database is busy with an import: guess again next time, and never leave a transaction open
 }
 
-// Building the graph reads every report, so it is kept until the data changes. SQLite's data_version moves when another
-// process (an import) writes to the file; our own writes, such as counting API requests, do not move it.
-let cached: { at: number; version: number; graph: Graph } | null = null;
-const dataVersion = (d: DatabaseSync) => (d.prepare("PRAGMA data_version").get() as { data_version: number }).data_version;
+// Building the graph reads every report, so it is kept until the data changes. Every import ends by writing the time
+// into `meta.data_at`; that mark, not ordinary writes such as a sign-in or a counted API request, is what ends the cache.
+let cached: { at: number; version: string; graph: Graph } | null = null;
+const dataVersion = (d: DatabaseSync) => (d.prepare("SELECT v FROM meta WHERE k = 'data_at'").get() as { v: string } | undefined)?.v ?? "";
 
 export function getGraph(): Graph {
   const d = db(), version = dataVersion(d);

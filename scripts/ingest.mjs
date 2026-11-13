@@ -555,4 +555,6 @@ else if (cmd === "subdomains") await importSubdomains();
 else if (cmd === "cvenow") await importCveNow();
 else if (cmd === "cveplace") placeCves();
 else if (cmd === "status") status();
-else console.log("Usage: node scripts/ingest.mjs <import|list|details|logos|index|payloads|cves|seed <file>|status> [--max N]");
+else console.log("Usage: node scripts/ingest.mjs <import|list|details|logos|index|payloads|cves|cvenow|subdomains|seed <file>|status> [--max N]");
+// Tell the running site that the data has changed, so it rebuilds what it keeps in memory.
+if (cmd && cmd !== "status") setMeta("data_at", new Date().toISOString());
