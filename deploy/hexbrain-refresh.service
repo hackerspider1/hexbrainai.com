@@ -1,0 +1,18 @@
+# Nightly: keeps a copy of the database, then fetches what is new (reports, write-ups, CVEs, subdomains, logos).
+# Install with hexbrain-refresh.timer in /etc/systemd/system, then: systemctl enable --now hexbrain-refresh.timer
+[Unit]
+Description=HexBrain nightly data refresh
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=hexbrain
+Group=hexbrain
+WorkingDirectory=/opt/hexbrain/app
+Environment=HOME=/opt/hexbrain
+# A copy first, so accounts and keys can be restored if anything goes wrong. The last seven are kept.
+ExecStartPre=/bin/sh -c 'mkdir -p /opt/hexbrain/backups && sqlite3 data/hexbrain.db ".timeout 20000" ".backup /opt/hexbrain/backups/hexbrain-$(date +%%F).db" && ls -1t /opt/hexbrain/backups/hexbrain-*.db | tail -n +8 | xargs -r rm -f'
+# Each step runs even if the one before it failed, so one source being down does not stop the rest.
+ExecStart=/bin/sh -c 'for step in import "details --max 3000" index cves cvenow subdomains "logos --max 500"; do echo "== $step"; /usr/bin/node scripts/ingest.mjs $step || echo "!! $step failed"; done'
+TimeoutStartSec=6h
+Nice=10

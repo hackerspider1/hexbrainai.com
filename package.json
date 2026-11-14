@@ -14,7 +14,7 @@
     "test:e2e": "node tests/e2e.mjs",
     "ingest:import": "node scripts/ingest.mjs import",
     "ingest:logos": "node scripts/ingest.mjs logos --max 500",
-    "ingest:refresh": "node scripts/ingest.mjs import && node scripts/ingest.mjs details --max 20000 && node scripts/ingest.mjs index && node scripts/ingest.mjs payloads && node scripts/ingest.mjs cves && node scripts/ingest.mjs logos --max 500",
+    "ingest:refresh": "node scripts/ingest.mjs import && node scripts/ingest.mjs details --max 20000 && node scripts/ingest.mjs index && node scripts/ingest.mjs payloads && node scripts/ingest.mjs cves && node scripts/ingest.mjs cvenow && node scripts/ingest.mjs subdomains && node scripts/ingest.mjs logos --max 500",
     "test:auth": "node tests/auth.mjs",
     "ingest:index": "node scripts/ingest.mjs index",
     "ingest:payloads": "node scripts/ingest.mjs payloads",

@@ -76,6 +76,8 @@ docker run -d -p 3000:3000 -v hexbrain-data:/app/data \
 
 Without Docker, on a plain server: `deploy/` holds the systemd service and Caddy configuration used on the live site (Cloudflare in front, Caddy for HTTPS, the app on port 3000 on the loopback address only), and `deploy/deploy.sh` sends new code to the server, builds it and restarts the app.
 
+`deploy/hexbrain-refresh.service` and `.timer` run the data refresh every night at 03:30 UTC, after saving a copy of the database to `/opt/hexbrain/backups` (the last seven are kept). See what the last run did with `journalctl -u hexbrain-refresh -n 80`.
+
 Put HTTPS in front of it (Caddy, nginx or your host's proxy), and make sure the proxy passes the visitor's address in `X-Forwarded-For`, which the request limits use.
 
 | Variable | Purpose |
